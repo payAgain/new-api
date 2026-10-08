@@ -2,6 +2,58 @@
 
 DO NOT send optional commentary
 
+## 本 fork 的用户约定（2026-10-08）
+
+本节记录用户在本次对话中确认的开发和部署要求。后续维护本 fork 时沿用这些约定；用户的新指令优先于历史方案。下文保留的上游 PR 规范仅在用户以后明确要求创建 PR 时适用。
+
+### 项目范围和工作目录
+
+- 本仓库是用户自己的 New API 定制 fork，远程为 `https://github.com/payAgain/new-api.git`，上游为 `https://github.com/QuantumNous/new-api.git`。开发目的是满足用户自己的需求，不以向上游贡献代码为目标。
+- 本机代码目录是 `/Users/yimingd/AI/new-api`。对话的操作工作区可能是 `/Users/yimingd/Remote/Tokyo`，执行仓库命令时明确指定代码目录，避免在运维工作区操作错仓库。
+- 用户曾要求调研 New API 的近期更新频率及重大更新。后续选择开发基线时，先核对上游最新发布和相关变更，再从明确的发布提交开始开发；不要把上游默认分支的最新提交自动当作发布版本。
+- 本轮 WorkBuddy 开发基线为 `v1.0.0-rc.42`，上游提交 `6370b29424168039e94d40d610191e7d2e65dbf4`。这是本轮采用的基线记录，不表示未来始终是最新发布。
+
+### 分支、合并和上游同步
+
+- `main` 是用户自己的稳定发布分支，`develop` 是日常开发集成分支。新功能、修复和上游同步从开发分支创建临时分支，例如 `feat/*`、`fix/*`、`sync/*`；不要直接在 `main` 编写功能。
+- 用户不采用 PR 流程：定制功能通过本地 Git 合并进入 `develop`，验证后再合入 `main`。不要求向用户自己的远程仓库或上游仓库创建 PR，也不要自动创建 PR、推送提交或发布远程产物。
+- 用户明确要求将本轮已验证的 `feat/workbuddy-native` 合入本地主分支。合入发布分支与在发布分支直接开发是不同操作，该请求授权本次本地合并。
+- 发布合并保留功能提交历史；已共享的分支不随意 rebase 或强制推送。线上紧急修复从 `main` 开始，修复后同步回开发分支。
+- 选择性引入用户需要的上游提交。在 `sync/*` 上核对完整功能、前置依赖、协议和数据库变化，使用 `git cherry-pick -x` 保留来源；发生冲突时补齐来源 SHA、PR 链接和处理说明。上游 PR 链接用于溯源，不代表需要创建自己的 PR。
+- 需要整体升级基线时，在独立同步分支评估并合并指定上游发布标签，验证用户的定制功能后再进入开发和发布分支。添加 `upstream` 远程或获取其引用，不等于自动合并上游。
+
+### 版本号
+
+- 用户的版本号完全跟随采用的上游发布版本，包括上游的 `rc` 等后缀，不建立独立的版本号体系。
+- 不使用此前规划中建议的 `mdy-v*`、个人语义版本号、定制递增后缀或独立候选版本编号。以前关于这些命名的建议已被用户本次要求取代。
+- 构建时的 `VERSION`、前后端显示版本及发布版本采用上游基线版本。本轮对应 `v1.0.0-rc.42`；单独挑选后续上游提交不自动声称已经升级到另一完整上游版本。
+- 同一上游版本上的不同定制构建，通过实际 Git 提交 SHA、镜像 ID/digest 和构建记录区分；这些是构建标识，不是新的产品版本号。部署必须能追溯到具体定制提交。
+- 保留上游标签及其原始提交，不移动或重写已有上游标签来指向定制代码。构建定制版本时以发布分支的具体 SHA 为源码，另传入对应上游版本，避免按上游标签检出而遗漏定制功能。
+
+### Docker 和 VPS 部署
+
+- Docker 部署需要构建镜像，但不要求上传 Docker Hub/GHCR，也不要求先把代码提交或推送到 GitHub。是否使用镜像仓库由用户后续选择。
+- 可在 VPS 本地构建，或在本机构建后通过 `docker save` 导出、传输到 VPS，再用 `docker load` 导入。此前建议的本机构建和传输方式是可选方案，不视为用户已要求立即执行部署。
+- 本机是 Mac，本轮验证的 VPS 平台是 `linux/amd64`。本机构建 VPS 镜像时指定目标 Linux 平台；未来换服务器应重新核对架构。
+- 部署定制功能时使用实际构建的定制镜像。仓库现有 Compose 默认使用 `calciumion/new-api:latest`，现有镜像发布 workflow 的目标也仍是上游镜像地址；它们不会自动变成用户的定制发布体系。不要默认执行这些上传流程。
+- 以已验证的镜像 ID/digest 部署，保留上一版产物，涉及数据迁移时备份并检查数据回滚兼容性。部署配置沿用实际实例的数据库、Redis、数据卷和认证配置，不用示例配置覆盖生产环境。
+- 本地合并、构建、远程推送、发布镜像和替换线上容器是独立动作。用户本次要求合入主分支，不包含立即替换线上部署或拆除现有服务。
+
+### WorkBuddy 的需求、历史方案和当前实现
+
+- 原始功能来源是用户的 pi-desktop 插件 `/Users/yimingd/.pi-desktop/plugins/installed/local.pi-desktop-workbuddy/`。独立桥接服务的工作目录为 `/Users/yimingd/Remote/Tokyo/work/workbuddy-bridge`，用于必要的协议和兼容性溯源，不是原生渠道的运行依赖。
+- 用户最初选择 VPS 部署、提供简单面板，服务只供 New API 使用，不单独暴露到公网；随后要求将签到改为自动签到。
+- 用户曾要求移除 VPS 上的独立部署，改用本机独立服务并经 SSH 隧道接入 VPS，当时依据是地区限制判断。用户之后明确纠正：此前不可用是请求格式问题，不是 VPS 地区问题。不要以历史误诊为理由强制保留本机出口或隧道架构。
+- 曾出现客户端 `MODEL_NOT_CONFIGURED` 提示及桥接上游 HTTP 404。排查时核对真实请求格式和端点兼容性，尤其是 `/v1/chat/completions` 与 `/v1/responses`，不能只根据客户端提示判定模型或地区不可用。
+- 当前要求是将该服务原生迁入 New API，让 VPS 上的 New API 直接连接 WorkBuddy 上游，消除独立 Node 服务和 SSH 隧道的运行依赖；管理功能放在已有渠道页面，不额外部署公网面板。
+- 原生 WorkBuddy 渠道为类型 `64`。账号通过渠道的单密钥 JSON 配置导入，国内和国际账号分渠道；管理入口支持账号启停、优先/轮询分配、积分查询、令牌刷新和签到。账号状态和错误信息不暴露可用凭据。
+- 自动签到默认开启，由主节点在北京时间 08:00（日本时间 09:00）后执行，可启动补签，先读取上游状态、跳过停用账号、防止重复领取，失败后间隔 15 分钟重试。
+- Chat Completions 和 HTTP Responses 均支持流式和非流式。协议转换、用量和计费复用 New API 已有逻辑；Responses 输入需要完整历史，不支持 `previous_response_id`、服务端 conversation 或 `/responses/compact`。不要把未实现的登录或协议能力描述成已支持。
+- 开发提交为 `3be7d251f`（`feat: integrate native WorkBuddy channel`）。已在 VPS 直连取得 17 个模型，验证 `hy3`、`deepseek-v4.1-flash` 及 Responses 流式/非流式请求；这些是本轮验证结果，不承诺未来模型列表和上游行为不变。
+- 本轮后端、前端类型检查/lint/相关测试、Mac 和 Linux 构建已经通过。凭据保存验证覆盖 SQLite 3.50.4、MySQL 8.0.46、PostgreSQL 16.15；主要测试见 `pkg/workbuddy/workbuddy_test.go`，三库验证使用 `WORKBUDDY_TEST_MYSQL_DSN`、`WORKBUDDY_TEST_POSTGRES_DSN` 指向独立测试库。后续修改仍按下文规则做对应验证，不把历史结果当成新变更已验证。
+- 原生渠道的代码合入不自动迁移线上账号和渠道配置，也不自动停用旧桥接服务。线上切换应在用户要求部署时完成，并先验证新渠道再清理旧服务。
+- 将用户后续确认的约定维护到本文件，明确区分当前要求、历史方案、可选建议和实际部署状态。不得写入账号令牌、SSH 私钥、数据库密码或其他可用秘密。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
