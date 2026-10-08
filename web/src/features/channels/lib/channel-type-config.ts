@@ -49,6 +49,14 @@ export interface ChannelTypeConfig {
  * Configuration for each channel type
  */
 export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
+  64: {
+    id: 64,
+    name: CHANNEL_TYPES[64],
+    icon: 'Tencent',
+    hints: {
+      key: 'Paste WorkBuddy account JSON (accessToken, refreshToken, uid or uin, domain)',
+    },
+  },
   [CHANNEL_TYPE_SGLANG]: {
     id: CHANNEL_TYPE_SGLANG,
     name: CHANNEL_TYPES[CHANNEL_TYPE_SGLANG],

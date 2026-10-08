@@ -119,7 +119,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const handleQueryBalance = () => {
     setCurrentRow(channel)
-    setOpen('balance-query')
+    setOpen(channel.type === 64 ? 'workbuddy' : 'balance-query')
   }
 
   const handleFetchModels = () => {
@@ -280,6 +280,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
+          {channel.type === 64 && (
+            <DropdownMenuItem
+              onClick={() => {
+                setCurrentRow(channel)
+                setOpen('workbuddy')
+              }}
+            >
+              {t('WorkBuddy accounts')}
+            </DropdownMenuItem>
+          )}
           {/* Query Balance */}
           <DropdownMenuItem onClick={handleQueryBalance}>
             {t('Query Balance')}

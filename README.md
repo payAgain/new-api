@@ -158,6 +158,20 @@ Accounts, channels, plugin installation states, usage, prices, and costs shown b
 
 This README describes the current source tree. Check the release notes for the version you deploy.
 
+### Native WorkBuddy channel (this fork)
+
+Select **WorkBuddy** (type 64) in the channel editor, use single-key mode, and paste the account configuration below into the key field. Leave the API address empty; endpoints are selected from the account domain. Credentials from the previous standalone bridge are compatible. Keep domestic and international accounts in separate channels, then fetch models in the editor.
+
+```json
+{"accounts":[{"accessToken":"REPLACE_WITH_ACCESS_TOKEN","refreshToken":"REPLACE_WITH_REFRESH_TOKEN","uid":"REPLACE_WITH_USER_ID","domain":"codebuddy.cn","nickname":"Personal","enabled":true}],"distribution":"priority","autoCheckin":true}
+```
+
+Chat Completions and HTTP Responses support streaming and non-streaming requests. Responses requests must include the complete input history; `previous_response_id`, server-managed conversations, and `/responses/compact` are unsupported. Credentials rotate in the channel database, with compare-and-swap protection against concurrent account imports. The channel's **WorkBuddy accounts** action manages enabled accounts, priority/round-robin selection, credits, refresh, and check-in. Read-only operators cannot perform these mutations.
+
+Automatic check-in runs on the master node from 08:00 Asia/Shanghai (09:00 Japan time), including startup catch-up. It checks upstream activity status before claiming and skips disabled accounts; failed operations retry after 15 minutes. No standalone process or SSH tunnel is required. Existing bridge credentials must be imported before retiring the old bridge; this source change does not switch existing channels automatically.
+
+Backend regression tests are consolidated in `pkg/workbuddy/workbuddy_test.go`. Run `go test ./pkg/workbuddy ./relay/channel/workbuddy ./controller ./router`; set `WORKBUDDY_TEST_MYSQL_DSN` and `WORKBUDDY_TEST_POSTGRES_DSN` to disposable databases to include the real-engine credential persistence matrix (SQLite runs by default). Validation used SQLite 3.50.4, MySQL 8.0.46, and PostgreSQL 16.15. Management endpoints require the existing channel read/sensitive-write permissions; credential mutations use the existing session-origin protection and critical rate limit. The security review references OWASP ASVS 5.0, the Authentication Cheat Sheet, and the Session Management Cheat Sheet; credentials are omitted from account status and upstream error messages.
+
 <a id="quick-start"></a>
 
 ## Quick start

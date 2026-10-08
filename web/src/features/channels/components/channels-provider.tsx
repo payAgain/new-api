@@ -42,6 +42,7 @@ type DialogType =
   | 'fetch-models'
   | 'ollama-models'
   | 'inference-status'
+  | 'workbuddy'
   | 'multi-key-manage'
   | 'tag-batch-edit'
   | 'edit-tag'

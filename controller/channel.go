@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/workbuddy"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -548,6 +549,22 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		return fmt.Errorf("channel cannot be empty")
 	}
 
+	if channel.Type == constant.ChannelTypeWorkBuddy {
+		if channel.ChannelInfo.IsMultiKey {
+			return fmt.Errorf("WorkBuddy uses accounts inside a single JSON configuration")
+		}
+		if isAdd || strings.TrimSpace(channel.Key) != "" {
+			cfg, err := workbuddy.ParseConfig(channel.Key)
+			if err != nil {
+				return err
+			}
+			encoded, err := common.Marshal(cfg)
+			if err != nil {
+				return err
+			}
+			channel.Key = string(encoded)
+		}
+	}
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
@@ -769,6 +786,10 @@ func AddChannel(c *gin.Context) {
 	baseURLFromPluginDefault := addChannelRequest.Channel != nil &&
 		addChannelRequest.Channel.Type == constant.ChannelTypeTaskPlugin &&
 		(addChannelRequest.Channel.BaseURL == nil || strings.TrimSpace(*addChannelRequest.Channel.BaseURL) == "")
+	if addChannelRequest.Channel != nil && addChannelRequest.Channel.Type == constant.ChannelTypeWorkBuddy && addChannelRequest.Mode != "single" {
+		c.JSON(400, gin.H{"success": false, "message": "WorkBuddy accounts must use single JSON configuration mode"})
+		return
+	}
 	// 使用统一的校验函数
 	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -1514,7 +1535,7 @@ func FetchModels(c *gin.Context) {
 		}
 
 		key := strings.TrimSpace(req.Key)
-		if req.Type != constant.ChannelTypeCodex {
+		if req.Type != constant.ChannelTypeCodex && req.Type != constant.ChannelTypeWorkBuddy {
 			key = strings.Split(key, "\n")[0]
 		}
 		channel = &model.Channel{
