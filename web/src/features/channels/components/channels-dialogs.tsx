@@ -28,6 +28,7 @@ import { MultiKeyManageDialog } from './dialogs/multi-key-manage-dialog'
 import { OllamaModelsDialog } from './dialogs/ollama-models-dialog'
 import { TagBatchEditDialog } from './dialogs/tag-batch-edit-dialog'
 import { UpstreamUpdateDialog } from './dialogs/upstream-update-dialog'
+import { WorkBuddyDialog } from './dialogs/workbuddy-dialog'
 import { ChannelMutateDrawer } from './drawers/channel-mutate-drawer'
 
 export function ChannelsDialogs() {
@@ -35,6 +36,14 @@ export function ChannelsDialogs() {
 
   return (
     <>
+      {open === 'workbuddy' && currentRow?.type === 64 && (
+        <WorkBuddyDialog
+          key={currentRow.id}
+          channelId={currentRow.id}
+          channelName={currentRow.name}
+          onClose={() => setOpen(null)}
+        />
+      )}
       {open === 'inference-status' &&
         currentRow &&
         [CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG].includes(currentRow.type) && (

@@ -75,8 +75,11 @@ var accessTokenExemptRoutes = []string{
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside
 // channelPermissionRoutes.
 var accessTokenHelperRoutes = map[string]authz.Permission{
-	"GET /api/task_plugin_options": authz.TaskPluginBind,
-	"GET /api/audit":               authz.AuditRead,
+	"GET /api/channel/:id/workbuddy":                 authz.ChannelRead,
+	"POST /api/channel/:id/workbuddy/settings":       authz.ChannelSensitiveWrite,
+	"POST /api/channel/:id/workbuddy/:index/:action": authz.ChannelSensitiveWrite,
+	"GET /api/task_plugin_options":                   authz.TaskPluginBind,
+	"GET /api/audit":                                 authz.AuditRead,
 }
 
 func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {

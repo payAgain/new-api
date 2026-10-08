@@ -158,6 +158,20 @@ New API 是面向应用、Agent 和团队的自托管 AI 网关。将不同厂�
 
 本 README 描述当前源码的能力，部署时请同时查看所选版本的发布说明。
 
+### 原生 WorkBuddy 渠道（本 fork）
+
+在渠道编辑器选择 **WorkBuddy（类型 64）**，使用单密钥模式，将账号 JSON 配置粘贴到密钥字段。API 地址留空，服务按账号 domain 选择上游地址。原独立服务的 credential 字段可直接导入；国内和国际账号需分别建立渠道。保存前可使用获取模型功能。
+
+```json
+{"accounts":[{"accessToken":"替换为访问令牌","refreshToken":"替换为刷新令牌","uid":"替换为用户ID","domain":"codebuddy.cn","nickname":"个人账号","enabled":true}],"distribution":"priority","autoCheckin":true}
+```
+
+支持 Chat Completions 和 HTTP Responses 的流式、非流式请求。Responses 需提交完整输入历史，不支持 `previous_response_id`、服务端托管 conversation 和 `/responses/compact`。账号令牌刷新后保存到渠道数据库，并通过事务与旧值比较防止覆盖管理员并发导入的配置。渠道的“WorkBuddy 账号”入口提供账号启停、优先/轮询分配、积分查询、刷新和签到，只读用户不能执行变更。
+
+自动签到由主节点执行，时间为北京时间 08:00（日本时间 09:00），启动后可补签；先查询上游签到状态再领取，跳过停用账号，失败后间隔 15 分钟重试。运行时无需独立服务或 SSH 隧道。替换旧服务前需将账号导入原生渠道，本次源码变更不会自动修改已有渠道。
+
+后端测试集中在 `pkg/workbuddy/workbuddy_test.go`。运行 `go test ./pkg/workbuddy ./relay/channel/workbuddy ./controller ./router`；提供 `WORKBUDDY_TEST_MYSQL_DSN` 和 `WORKBUDDY_TEST_POSTGRES_DSN` 可在独立测试库验证凭据保存（SQLite 默认执行）。已验证版本为 SQLite 3.50.4、MySQL 8.0.46、PostgreSQL 16.15。管理接口沿用渠道读取/敏感写入权限、会话来源校验和关键操作限流。安全审查参考 OWASP ASVS 5.0、Authentication Cheat Sheet、Session Management Cheat Sheet；账号状态与上游错误不返回访问及刷新令牌。
+
 <a id="quick-start"></a>
 
 ## 快速开始

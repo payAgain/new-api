@@ -49,6 +49,9 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		controller.GetChannelKey,
 	)
 
+	handlePermissionRoute(channelRoute, http.MethodGet, "/:id/workbuddy", authz.ChannelRead, middleware.DisableCache(), controller.GetWorkBuddyChannelState)
+	handlePermissionRoute(channelRoute, http.MethodPost, "/:id/workbuddy/settings", authz.ChannelSensitiveWrite, middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), controller.UpdateWorkBuddyChannelSettings)
+	handlePermissionRoute(channelRoute, http.MethodPost, "/:id/workbuddy/:index/:action", authz.ChannelSensitiveWrite, middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), controller.WorkBuddyChannelAccountAction)
 	for _, route := range channelPermissionRoutes {
 		handlePermissionRoute(channelRoute, route.method, route.path, route.permission, route.handler)
 	}

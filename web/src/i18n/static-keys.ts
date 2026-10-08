@@ -896,4 +896,6 @@ export const STATIC_I18N_KEYS = [
   'Verification method',
   'Admin permissions updated',
   'Provider ID',
+  'Paste WorkBuddy account JSON (accessToken, refreshToken, uid or uin, domain)',
+  'Connect WorkBuddy accounts directly',
 ] as const

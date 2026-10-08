@@ -61,7 +61,8 @@ const (
 	ChannelTypeTaskPlugin     = 61
 	ChannelTypeVLLM           = 62
 	ChannelTypeSGLang         = 63
-	ChannelTypeDummy          // this one is only for count, do not add any channel after this
+	ChannelTypeWorkBuddy      = 64
+	ChannelTypeDummy          = 65 // this one is only for count, do not add any channel after this
 
 )
 
@@ -132,6 +133,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //61
 	"",                                          //62
 	"",                                          //63
+	"",                                          //64
 }
 
 func GetChannelBaseURL(channelType int) string {
@@ -199,6 +201,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom: "Advanced Custom",
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
+	ChannelTypeWorkBuddy:      "WorkBuddy",
 	ChannelTypeTaskPlugin:     "Task Plugin",
 	ChannelTypeVLLM:           "vLLM",
 	ChannelTypeSGLang:         "SGLang",

@@ -2655,7 +2655,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
@@ -6866,5 +6866,15 @@
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放"
-  }
+  },
+  "WorkBuddy accounts": "WorkBuddy 帳號",
+  "WorkBuddy account": "WorkBuddy 帳號",
+  "Automatic check-in: 09:00 (Japan time)": "自動簽到：09:00（日本時間）",
+  "Rotate accounts": "輪流使用帳號",
+  "Last check-in day": "最近簽到日期",
+  "Not checked": "尚未簽到",
+  "Check in now": "立即簽到",
+  "Refresh credential": "更新憑證",
+  "Connect WorkBuddy accounts directly": "直接連接 WorkBuddy 帳號",
+  "Paste WorkBuddy account JSON (accessToken, refreshToken, uid or uin, domain)": "貼上 WorkBuddy 帳號 JSON（accessToken、refreshToken、uid 或 uin、domain）"
 }
