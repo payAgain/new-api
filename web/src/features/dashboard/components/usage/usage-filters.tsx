@@ -49,6 +49,7 @@ import type { UsageFilters as UsageFilterValues } from '../../usage-types'
 interface UsageFiltersProps {
   filters: UsageFilterValues
   allAccounts: boolean
+  singleModel?: boolean
   onApply: (filters: UsageFilterValues) => void
   onReset: () => void
 }
@@ -61,7 +62,7 @@ export function UsageFilters(props: UsageFiltersProps) {
     .object({
       start: z.date({ error: t('Choose a start time.') }),
       end: z.date({ error: t('Choose an end time.') }),
-      granularity: z.enum(['hour', 'day']),
+      granularity: z.enum(['hour', 'day', 'month']),
       model: z
         .string()
         .max(256, t('Model names must be at most 256 characters.')),
@@ -71,13 +72,11 @@ export function UsageFilters(props: UsageFiltersProps) {
     })
     .superRefine((values, context) => {
       const duration = values.end.getTime() - values.start.getTime()
-      if (duration <= 0 || duration > 31 * 86400000) {
+      if (duration <= 0) {
         context.addIssue({
           code: 'custom',
           path: ['end'],
-          message: t(
-            'Choose a time range of up to 31 days with the end after the start.'
-          ),
+          message: t('Choose an end time after the start time.'),
         })
       }
     })
@@ -103,7 +102,7 @@ export function UsageFilters(props: UsageFiltersProps) {
       }
       title={t('Usage filters')}
       description={t(
-        'Analyze up to 31 days of usage. Model and username filters use exact names.'
+        'Analyze retained history over any date range. Long ranges are grouped by day or month. Model and username filters use exact names.'
       )}
       footer={
         <>
@@ -197,7 +196,11 @@ export function UsageFilters(props: UsageFiltersProps) {
                   <FormControl>
                     <SelectTrigger className='w-full'>
                       <SelectValue>
-                        {field.value === 'hour' ? t('Hour') : t('Day')}
+                        {t(
+                          { hour: 'Hour', day: 'Day', month: 'Month' }[
+                            field.value
+                          ]
+                        )}
                       </SelectValue>
                     </SelectTrigger>
                   </FormControl>
@@ -205,6 +208,7 @@ export function UsageFilters(props: UsageFiltersProps) {
                     <SelectGroup>
                       <SelectItem value='hour'>{t('Hour')}</SelectItem>
                       <SelectItem value='day'>{t('Day')}</SelectItem>
+                      <SelectItem value='month'>{t('Month')}</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -212,23 +216,25 @@ export function UsageFilters(props: UsageFiltersProps) {
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name='model'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Model name')}</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    maxLength={256}
-                    placeholder={t('All models')}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {!props.singleModel && (
+            <FormField
+              control={form.control}
+              name='model'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Model name')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      maxLength={256}
+                      placeholder={t('All models')}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           {props.allAccounts && (
             <FormField
               control={form.control}

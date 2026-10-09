@@ -23,6 +23,7 @@ import {
   Info,
   Layers,
   Percent,
+  Wallet,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -33,8 +34,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatCompactNumber, formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import type { UsageMetrics, UsageSeriesPoint } from '../../usage-types'
 import { StatCard } from '../ui/stat-card'
@@ -49,6 +52,7 @@ interface UsageSummaryProps {
 export function UsageSummary(props: UsageSummaryProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  useSystemConfigStore((state) => state.config.currency)
   const summary = props.summary
   const cacheRatio = summary?.cache_ratio
   const cacheDescription = t(
@@ -56,6 +60,18 @@ export function UsageSummary(props: UsageSummaryProps) {
   )
   const unknownDisplay = t('Not reported')
   const items = [
+    {
+      key: 'quota',
+      title: t('API quota used'),
+      icon: Wallet,
+      value: formatQuotaWithCurrency(summary?.quota ?? 0, {
+        locale,
+        abbreviate: false,
+      }),
+      description: t('Actual charged quota from retained usage logs'),
+      sparkline: props.series?.map((point) => point.quota),
+      tone: 'accent-1' as const,
+    },
     {
       key: 'input',
       title: t('Input tokens'),
@@ -107,7 +123,9 @@ export function UsageSummary(props: UsageSummaryProps) {
       description: t('Recorded cache reads / input tokens'),
       tone: 'accent-3' as const,
     },
-  ].filter((item) => !props.compact || !['read', 'write'].includes(item.key))
+  ].filter(
+    (item) => !props.compact || !['read', 'write', 'quota'].includes(item.key)
+  )
 
   return (
     <div
@@ -115,7 +133,7 @@ export function UsageSummary(props: UsageSummaryProps) {
         'grid gap-3',
         props.compact
           ? 'grid-cols-1 sm:grid-cols-3'
-          : 'grid-cols-2 xl:grid-cols-5'
+          : 'grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6'
       )}
     >
       {items.map((item) => (

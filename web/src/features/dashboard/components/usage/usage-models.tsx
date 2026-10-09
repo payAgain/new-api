@@ -24,7 +24,9 @@ import {
 } from '@/components/data-table'
 import { Progress } from '@/components/ui/progress'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatCompactNumber, formatNumber } from '@/lib/format'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { getModelTokenShare } from '../../lib/usage'
 import type { ModelUsage } from '../../usage-types'
@@ -34,11 +36,13 @@ interface UsageModelsProps {
   models: ModelUsage[]
   totalTokens: number
   compact?: boolean
+  totalQuota?: number
 }
 
 export function UsageModels(props: UsageModelsProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  useSystemConfigStore((state) => state.config.currency)
   const unknownDisplay = t('Not reported')
   const columns: StaticDataTableColumn<ModelUsage>[] = [
     {
@@ -52,6 +56,33 @@ export function UsageModels(props: UsageModelsProps) {
           {model.model_name}
         </span>
       ),
+    },
+    {
+      id: 'quota',
+      header: t('API quota used'),
+      className: 'text-right',
+      cellClassName: 'text-right font-mono font-semibold tabular-nums',
+      cell: (model) =>
+        formatQuotaWithCurrency(model.quota, { locale, abbreviate: false }),
+    },
+    {
+      id: 'quota-share',
+      header: t('Quota share'),
+      className: 'text-right',
+      cellClassName: 'text-right',
+      cell: (model) =>
+        `${formatNumber(props.totalQuota ? (model.quota / props.totalQuota) * 100 : 0, locale)}%`,
+    },
+    {
+      id: 'average',
+      header: t('Quota per request'),
+      className: 'text-right',
+      cellClassName: 'text-right font-mono tabular-nums',
+      cell: (model) =>
+        formatQuotaWithCurrency(
+          model.request_count ? model.quota / model.request_count : 0,
+          { locale, abbreviate: false }
+        ),
     },
     {
       id: 'input',
@@ -154,7 +185,7 @@ export function UsageModels(props: UsageModelsProps) {
     <PanelWrapper
       title={t('Usage by model')}
       description={t(
-        'Sorted by total tokens. Cache reads and writes are included in input; missing cache values remain unknown.'
+        'Actual quota charged in usage logs. Cache is included in input; missing values remain unknown.'
       )}
       contentClassName='p-0 sm:p-0'
     >
@@ -163,7 +194,7 @@ export function UsageModels(props: UsageModelsProps) {
         columns={columns}
         getRowKey={(model) => model.model_name}
         tableProps={{ 'aria-label': t('Usage by model') }}
-        tableClassName='min-w-[900px]'
+        tableClassName='min-w-[1200px]'
         emptyContent={t('No model usage in this time range')}
       />
     </PanelWrapper>

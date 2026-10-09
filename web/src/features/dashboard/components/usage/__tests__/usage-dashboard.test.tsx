@@ -19,15 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   fireEvent,
+  act,
   render,
   screen,
   waitFor,
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { Database } from 'lucide-react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -37,6 +40,7 @@ import { UsageDashboard } from '../usage-dashboard'
 import { UsageSummary } from '../usage-summary'
 
 const metrics: UsageMetrics = {
+  quota: 500000,
   request_count: 1,
   input_tokens: 1200,
   output_tokens: 300,
@@ -79,7 +83,8 @@ beforeEach(() => {
   }))
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await i18next.changeLanguage('en')
   client.clear()
   vi.useRealTimers()
   useAuthStore.setState(useAuthStore.getInitialState(), true)
@@ -94,6 +99,83 @@ function renderUsage() {
 }
 
 describe('personal usage dashboard', () => {
+  it('updates quota and history labels using the actual Chinese translation resource', async () => {
+    renderUsage()
+    await screen.findByRole('table', { name: 'Usage by model' })
+    await act(async () => {
+      i18next.addResourceBundle(
+        'zhCN',
+        'translation',
+        zh.translation,
+        true,
+        true
+      )
+      await i18next.changeLanguage('zhCN')
+    })
+    const table = screen.getByRole('table', { name: '各模型用量' })
+    expect(
+      within(table).getByRole('columnheader', { name: 'API 额度消耗' })
+    ).toBeVisible()
+    expect(screen.getByRole('tab', { name: '全部历史' })).toBeVisible()
+  })
+  it('offers a year and all retained history without a 30-day ceiling', async () => {
+    const user = userEvent.setup()
+    renderUsage()
+    await user.click(screen.getByRole('tab', { name: 'Last year' }))
+    await waitFor(() =>
+      expect(api.get).toHaveBeenLastCalledWith(
+        '/api/data/usage/self',
+        expect.objectContaining({
+          params: expect.objectContaining({ granularity: 'day' }),
+        })
+      )
+    )
+    await user.click(screen.getByRole('tab', { name: 'All history' }))
+    await waitFor(() =>
+      expect(api.get).toHaveBeenLastCalledWith(
+        '/api/data/usage/self',
+        expect.objectContaining({
+          params: expect.objectContaining({ start_timestamp: 1 }),
+        })
+      )
+    )
+  })
+  it('shows actual quota charged alongside model token usage', async () => {
+    renderUsage()
+    const table = await screen.findByRole('table', { name: 'Usage by model' })
+    expect(
+      within(table).getByRole('columnheader', { name: 'API quota used' })
+    ).toBeVisible()
+    expect(within(table).getAllByText('$1')[0]).toBeVisible()
+  })
+
+  it('accepts a custom time range longer than a year and keeps invalid end-before-start checks', async () => {
+    const user = userEvent.setup()
+    renderUsage()
+    await screen.findByRole('table', { name: 'Usage by model' })
+    await user.click(screen.getByRole('button', { name: 'Usage filters' }))
+    fireEvent.change(screen.getByLabelText('Start time'), {
+      target: { value: '2024-01-01T00:00' },
+    })
+    fireEvent.change(screen.getByLabelText('End time'), {
+      target: { value: '2026-10-09T00:00' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(api.get).toHaveBeenLastCalledWith('/api/data/usage/self', {
+      params: expect.objectContaining({
+        start_timestamp: Math.floor(
+          new Date('2024-01-01T00:00').getTime() / 1000
+        ),
+        end_timestamp: Math.floor(
+          new Date('2026-10-09T00:00').getTime() / 1000
+        ),
+      }),
+    })
+  })
+
   it('names the time-range tablist for assistive technology', () => {
     renderUsage()
     expect(
@@ -307,9 +389,7 @@ describe('personal usage dashboard', () => {
     fireEvent.change(endInput, { target: { value: '2020-01-01T00:00' } })
     await user.click(screen.getByRole('button', { name: 'Apply filters' }))
     expect(
-      await screen.findByText(
-        'Choose a time range of up to 31 days with the end after the start.'
-      )
+      await screen.findByText('Choose an end time after the start time.')
     ).toBeVisible()
     expect(screen.getByRole('dialog')).toBeVisible()
   })
@@ -440,5 +520,223 @@ describe('personal usage dashboard', () => {
         '1 requests have ambiguous input accounting and are excluded from input and cache totals.'
       )
     ).toBeVisible()
+  })
+})
+
+describe('single model analysis', () => {
+  const call = {
+    ...metrics,
+    id: 10,
+    created_at: 1791417600,
+    model_name: 'large-context-model',
+    token_name: 'personal-token',
+    request_id: 'call-10',
+    use_time: 2,
+    is_stream: true,
+    first_response_ms: 800,
+  }
+  function mockModelViews() {
+    vi.mocked(api.get).mockImplementation(async (_url, config) => {
+      const params = config?.params
+      let data: unknown = response
+      if (params?.view === 'models') {
+        data = [
+          { model_name: 'large-context-model', last_used: 1791417600 },
+          { model_name: 'other-model', last_used: 1791417500 },
+        ]
+      }
+      if (params?.view === 'requests') {
+        data = {
+          items: [
+            {
+              ...call,
+              model_name: params.model_name,
+              request_id: `call-${params.page}`,
+            },
+          ],
+          total: 25,
+          page: params.page,
+          page_size: params.page_size,
+        }
+      }
+      return { data: { success: true, data } }
+    })
+  }
+  function renderSingle() {
+    return render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard singleModel />
+      </QueryClientProvider>
+    )
+  }
+  it('selects a retained model before querying analysis and never requests an all-model summary', async () => {
+    mockModelViews()
+    renderSingle()
+    await screen.findByRole('region', { name: 'Individual calls' })
+    expect(
+      screen.getByRole('combobox', { name: 'Model to analyze' })
+    ).toHaveValue('large-context-model')
+    const requests = vi
+      .mocked(api.get)
+      .mock.calls.filter(([, config]) => config?.params?.view !== 'models')
+    expect(requests.length).toBeGreaterThan(0)
+    for (const [, config] of requests) {
+      expect(config?.params?.model_name).toBe('large-context-model')
+    }
+    expect(
+      screen.queryByRole('table', { name: 'Usage by model' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('tablist', { name: 'Rank models by' })
+    ).not.toBeInTheDocument()
+  })
+  it('switches models with the keyboard and preserves the selected model over all-history filtering', async () => {
+    mockModelViews()
+    const user = userEvent.setup()
+    renderSingle()
+    const selector = await screen.findByRole('combobox', {
+      name: 'Model to analyze',
+    })
+    await waitFor(() => expect(selector).toHaveValue('large-context-model'))
+    await user.click(selector)
+    await user.type(selector, 'other')
+    await user.keyboard('{ArrowDown}{Enter}')
+    await waitFor(() => expect(selector).toHaveValue('other-model'))
+    await user.click(screen.getByRole('tab', { name: 'All history' }))
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        '/api/data/usage/self',
+        expect.objectContaining({
+          params: expect.objectContaining({
+            model_name: 'other-model',
+            start_timestamp: 1,
+            view: 'requests',
+            page: 1,
+          }),
+        })
+      )
+    )
+    expect(selector).toHaveValue('other-model')
+  })
+  it('paginates individual calls and opens normalized details with request ID and unknown cache', async () => {
+    mockModelViews()
+    const user = userEvent.setup()
+    renderSingle()
+    const region = await screen.findByRole('region', {
+      name: 'Individual calls',
+    })
+    await within(region).findByText('personal-token')
+    await user.click(
+      within(region).getByRole('button', { name: 'Go to next page' })
+    )
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        '/api/data/usage/self',
+        expect.objectContaining({
+          params: expect.objectContaining({
+            view: 'requests',
+            page: 2,
+            model_name: 'large-context-model',
+          }),
+        })
+      )
+    )
+    await within(region).findByText('personal-token')
+    await user.click(within(region).getByRole('button', { name: 'Details' }))
+    const dialog = screen.getByRole('dialog', { name: 'Call details' })
+    expect(within(dialog).getByText('call-2')).toBeVisible()
+    expect(within(dialog).getAllByText('Not reported').length).toBeGreaterThan(
+      0
+    )
+    expect(
+      within(dialog).getByRole('button', { name: 'Copy request ID' })
+    ).toBeVisible()
+  })
+  it('keeps the model selector available when its chosen date range has no calls', async () => {
+    mockModelViews()
+    response.summary.request_count = 0
+    renderSingle()
+    await screen.findByText('No model usage in this time range')
+    expect(
+      screen.getByRole('combobox', { name: 'Model to analyze' })
+    ).toHaveValue('large-context-model')
+    expect(
+      screen.queryByRole('region', { name: 'Individual calls' })
+    ).not.toBeInTheDocument()
+  })
+  it('does not query usage when the authorized catalog is empty', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: { success: true, data: [] } })
+    renderSingle()
+    await screen.findByText('No recorded models')
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.every(([, config]) => config?.params?.view === 'models')
+    ).toBe(true)
+  })
+  it('shows a model-list error without falling back to all-model statistics', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: { success: false, message: 'catalog unavailable' },
+    })
+    renderSingle()
+    await screen.findByText('Model list could not be loaded')
+    expect(
+      screen.getByRole('combobox', { name: 'Model to analyze' })
+    ).toBeDisabled()
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.every(([, config]) => config?.params?.view === 'models')
+    ).toBe(true)
+  })
+  it('shows a calls error while keeping selected-model summary available', async () => {
+    mockModelViews()
+    const implementation = vi.mocked(api.get).getMockImplementation()
+    if (!implementation) throw new Error('Missing API fixture')
+    vi.mocked(api.get).mockImplementation(async (...args) => {
+      if (args[1]?.params?.view === 'requests') {
+        return { data: { success: false, message: 'calls unavailable' } }
+      }
+      return implementation(...args)
+    })
+    renderSingle()
+    await screen.findByText('Calls could not be loaded')
+    expect(
+      screen.getByRole('region', { name: 'Selected model analysis' })
+    ).toBeVisible()
+    expect(
+      screen.getByRole('combobox', { name: 'Model to analyze' })
+    ).toHaveValue('large-context-model')
+  })
+  it('keeps a long exact model name including surrounding whitespace intact', async () => {
+    mockModelViews()
+    const implementation = vi.mocked(api.get).getMockImplementation()
+    if (!implementation) throw new Error('Missing API fixture')
+    const model = ` model-${'long-'.repeat(48)} `
+    vi.mocked(api.get).mockImplementation(async (...args) => {
+      if (args[1]?.params?.view === 'models') {
+        return {
+          data: {
+            success: true,
+            data: [{ model_name: model, last_used: 1791417600 }],
+          },
+        }
+      }
+      return implementation(...args)
+    })
+    renderSingle()
+    await screen.findByRole('region', { name: 'Selected model analysis' })
+    expect(
+      screen.getByRole('combobox', { name: 'Model to analyze' })
+    ).toHaveValue(model)
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/data/usage/self',
+      expect.objectContaining({
+        params: expect.objectContaining({
+          model_name: model,
+          view: 'requests',
+        }),
+      })
+    )
   })
 })

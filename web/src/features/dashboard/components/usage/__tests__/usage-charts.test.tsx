@@ -87,6 +87,7 @@ describe('recorded cache chart', () => {
       }
     )
     const emptyBucket: UsageSeriesPoint = {
+      quota: 0,
       created_at: 1791417600,
       request_count: 0,
       input_tokens: 0,
@@ -155,5 +156,29 @@ describe('recorded cache chart', () => {
         expect(Number.isFinite(Number(dot.getAttribute('cy')))).toBe(true)
       }
     }
+  })
+})
+
+describe('model quota tooltip', () => {
+  it('formats actual quota as currency rather than tokens', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(0, 0, 320, 200)
+    )
+    render(
+      <ChartContainer config={{ quota: { label: 'API quota used' } }}>
+        <div>
+          <UsageTooltipContent
+            active
+            label={1791417600}
+            payload={[
+              { ...payload[0], name: 'quota', dataKey: 'quota', value: 500000 },
+            ]}
+          />
+        </div>
+      </ChartContainer>
+    )
+    expect(screen.getByText('API quota used')).toBeVisible()
+    expect(screen.getByText('$1')).toBeVisible()
+    expect(screen.queryByText('500,000')).not.toBeInTheDocument()
   })
 })

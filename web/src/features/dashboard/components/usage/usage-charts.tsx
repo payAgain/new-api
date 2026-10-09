@@ -36,7 +36,9 @@ import {
   ChartTooltipContent,
 } from '@/components/ui/chart'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatCompactNumber, formatNumber } from '@/lib/format'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import type { UsageGranularity, UsageSeriesPoint } from '../../usage-types'
 import { PanelWrapper } from '../ui/panel-wrapper'
@@ -45,18 +47,29 @@ interface UsageChartsProps {
   series: UsageSeriesPoint[]
   granularity: UsageGranularity
   cacheOnly?: boolean
+  metric?: 'tokens' | 'cache' | 'quota' | 'requests'
 }
 
 export function UsageCharts(props: UsageChartsProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  useSystemConfigStore((state) => state.config.currency)
+  const cacheOnly = props.cacheOnly || props.metric === 'cache'
+  const activityKey = props.metric === 'requests' ? 'request_count' : 'quota'
+  const activity = props.metric === 'quota' || props.metric === 'requests'
   const dateFormatter = new Intl.DateTimeFormat(
     locale,
     props.granularity === 'hour'
       ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
-      : { month: '2-digit', day: '2-digit' }
+      : {
+          year: 'numeric',
+          month: '2-digit',
+          ...(props.granularity === 'day' ? { day: '2-digit' as const } : {}),
+        }
   )
   const config = {
+    quota: { label: t('API quota used'), color: 'var(--chart-1)' },
+    request_count: { label: t('Charged calls'), color: 'var(--chart-2)' },
     input_tokens: { label: t('Input tokens'), color: 'var(--chart-1)' },
     output_tokens: { label: t('Output tokens'), color: 'var(--chart-2)' },
     cache_read_tokens: {
@@ -68,16 +81,24 @@ export function UsageCharts(props: UsageChartsProps) {
       color: 'var(--chart-4)',
     },
   }
-  const title = props.cacheOnly
+  let title = cacheOnly
     ? t('Recorded cache trend')
     : t('Input and output trend')
-  const description = props.cacheOnly
+  let description = cacheOnly
     ? t(
         'Cache is part of input. Read and write lines are shown separately and are not stacked.'
       )
     : t(
         'Total tokens = input + output. Cache counts are already part of input.'
       )
+  if (activity) {
+    title = t(
+      props.metric === 'quota' ? 'Quota usage trend' : 'Charged calls trend'
+    )
+    description = t(
+      'Only retained charged usage logs for the selected model are included.'
+    )
+  }
   const hasCache = props.series.some(
     (point) =>
       point.cache_read_tokens !== null || point.cache_write_tokens !== null
@@ -98,7 +119,11 @@ export function UsageCharts(props: UsageChartsProps) {
         tickLine={false}
         axisLine={false}
         width={58}
-        tickFormatter={(value: number) => formatCompactNumber(value, locale)}
+        tickFormatter={(value: number) =>
+          props.metric === 'quota'
+            ? formatQuotaWithCurrency(value, { locale })
+            : formatCompactNumber(value, locale)
+        }
       />
       <ChartTooltip content={<UsageTooltipContent />} />
       <ChartLegend content={<ChartLegendContent />} />
@@ -109,7 +134,7 @@ export function UsageCharts(props: UsageChartsProps) {
     <PanelWrapper
       title={title}
       description={description}
-      empty={props.cacheOnly && !hasCache}
+      empty={cacheOnly && !hasCache}
       emptyMessage={t(
         'No cache data was reported for this range. This does not mean a cache miss.'
       )}
@@ -121,10 +146,11 @@ export function UsageCharts(props: UsageChartsProps) {
         role='img'
         aria-label={title}
       >
-        {props.cacheOnly ? (
+        {cacheOnly ? (
           <LineChart data={props.series} accessibilityLayer>
             {axis}
             <Line
+              isAnimationActive={!props.metric}
               type='monotone'
               dataKey='cache_read_tokens'
               stroke='var(--color-cache_read_tokens)'
@@ -133,6 +159,7 @@ export function UsageCharts(props: UsageChartsProps) {
               connectNulls={false}
             />
             <Line
+              isAnimationActive={!props.metric}
               type='monotone'
               dataKey='cache_write_tokens'
               stroke='var(--color-cache_write_tokens)'
@@ -144,22 +171,37 @@ export function UsageCharts(props: UsageChartsProps) {
         ) : (
           <AreaChart data={props.series} accessibilityLayer>
             {axis}
-            <Area
-              type='monotone'
-              dataKey='input_tokens'
-              stackId='usage'
-              stroke='var(--color-input_tokens)'
-              fill='var(--color-input_tokens)'
-              fillOpacity={0.2}
-            />
-            <Area
-              type='monotone'
-              dataKey='output_tokens'
-              stackId='usage'
-              stroke='var(--color-output_tokens)'
-              fill='var(--color-output_tokens)'
-              fillOpacity={0.15}
-            />
+            {activity ? (
+              <Area
+                isAnimationActive={!props.metric}
+                type='monotone'
+                dataKey={activityKey}
+                stroke={`var(--color-${activityKey})`}
+                fill={`var(--color-${activityKey})`}
+                fillOpacity={0.15}
+              />
+            ) : (
+              <>
+                <Area
+                  isAnimationActive={!props.metric}
+                  type='monotone'
+                  dataKey='input_tokens'
+                  stackId='usage'
+                  stroke='var(--color-input_tokens)'
+                  fill='var(--color-input_tokens)'
+                  fillOpacity={0.2}
+                />
+                <Area
+                  isAnimationActive={!props.metric}
+                  type='monotone'
+                  dataKey='output_tokens'
+                  stackId='usage'
+                  stroke='var(--color-output_tokens)'
+                  fill='var(--color-output_tokens)'
+                  fillOpacity={0.15}
+                />
+              </>
+            )}
           </AreaChart>
         )}
       </ChartContainer>
@@ -172,13 +214,17 @@ export function UsageTooltipContent(
 ) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  useSystemConfigStore((state) => state.config.currency)
   const dateFormatter = new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   })
   const labels: Record<string, string> = {
+    quota: t('API quota used'),
+    request_count: t('Charged calls'),
     input_tokens: t('Input tokens'),
     output_tokens: t('Output tokens'),
     cache_read_tokens: t('Recorded cache read'),
@@ -204,7 +250,12 @@ export function UsageTooltipContent(
             {labels[String(item.dataKey)] ?? String(name)}
           </span>
           <span className='text-foreground font-mono font-medium tabular-nums'>
-            {formatNumber(Number(value), locale)}
+            {item.dataKey === 'quota'
+              ? formatQuotaWithCurrency(Number(value), {
+                  locale,
+                  abbreviate: false,
+                })
+              : formatNumber(Number(value), locale)}
           </span>
         </>
       )}
