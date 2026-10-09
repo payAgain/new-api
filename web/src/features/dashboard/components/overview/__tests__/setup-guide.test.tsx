@@ -77,8 +77,38 @@ beforeEach(() => {
         }
       case '/api/user/models':
         return { data: { success: true, data: ['gpt-4o-mini'] } }
-      case '/api/data/self':
-        return { data: { success: true, data: [] } }
+      case '/api/data/usage/self':
+        return {
+          data: {
+            success: true,
+            data: {
+              summary: {
+                request_count: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_read_tokens: null,
+                cache_write_tokens: null,
+                cache_ratio: null,
+                cache_recorded_requests: 0,
+                cache_unknown_requests: 0,
+                estimated_requests: 0,
+                ambiguous_requests: 0,
+              },
+              models: [],
+              series: [],
+              meta: {
+                start_timestamp: 0,
+                end_timestamp: 0,
+                granularity: 'hour',
+                timezone_offset: 0,
+                cache_semantics: 'recorded',
+                incomplete: false,
+                availability: 'logs',
+              },
+            },
+          },
+        }
       default:
         throw new Error(`Unexpected dashboard request: ${url}`)
     }
@@ -114,7 +144,7 @@ describe('overview setup guide', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(
       screen.getAllByRole('heading').map((heading) => heading.textContent)
-    ).toEqual(['Overview', 'Usage at a glance'])
+    ).toEqual(['Overview', 'Model usage at a glance'])
     expect(screen.queryByText('Setup guide complete')).not.toBeInTheDocument()
     expect(screen.queryByText('Setup progress: 3/3')).not.toBeInTheDocument()
     for (const name of ['API Keys', 'Channels', 'Usage Logs', 'Pricing']) {
