@@ -93,6 +93,12 @@ DO NOT send optional commentary
 - 本轮实际验证使用 SQLite 3.50.4、MySQL 8.0.46、PostgreSQL 16.15 与独立日志库 ClickHouse 25.8.33.6，覆盖跨年度额度汇总、日/月时区边界、账号隔离与超限报错。前端看板 77 项测试及深浅主题、手机端和 430 天历史的浏览器验收已通过；截图使用隔离示例库，不代表线上数据。证据位于运维工作区 `work/model-usage-comparison-validation/`，后续修改仍须重新验证。
 - 后续单模型分析修改的验证记录单独保存在运维工作区 `work/model-usage-detail-validation/`：四种数据库验证模型精确匹配、历史模型列表、分页稳定性、Token / 额度与汇总一致以及账号隔离；前端看板 84 项测试和单模型深浅主题、手机端、加载、错误、空数据与单次调用详情的浏览器验收通过。此记录不表示已合并到主线或已部署；截图仍为隔离示例库。
 
+### 主线合并与日志评估（2026-10-09）
+
+- 用户要求将已完成、已验证的单模型详细分析改动提交并合入本地主线，按 `feat/model-usage-comparison → develop → main` 保留提交历史；本次不包含远程推送或 VPS 升级。
+- 用户反馈现有错误日志无法定位问题，要求评估记录覆盖、上游错误详情、请求关联及后台展示是否足够。此次先做代码与现有记录的只读评估；日志改造、扩大敏感数据采集及线上配置调整应根据评估结果另行开展。
+- 模型调用明细只读计费消费日志是原有约定，错误排查应检查完整使用日志与服务端日志，不将该分析页当作全部请求或错误审计。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
