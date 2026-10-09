@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export type UsageScope = 'self' | 'all'
-export type UsageGranularity = 'hour' | 'day'
+export type UsageGranularity = 'hour' | 'day' | 'month'
 
 export interface UsageMetrics {
+  quota: number
   request_count: number
   input_tokens: number
   output_tokens: number
@@ -71,4 +72,27 @@ export interface UsageFilters {
   granularity: UsageGranularity
   model: string
   username: string
+}
+
+export interface UsageModelOption {
+  model_name: string
+  last_used: number
+}
+
+export interface UsageRequest extends UsageMetrics {
+  id: number
+  created_at: number
+  model_name: string
+  token_name: string
+  request_id: string
+  use_time: number
+  is_stream: boolean
+  first_response_ms: number | null
+}
+
+export interface UsageRequestPage {
+  items: UsageRequest[]
+  total: number
+  page: number
+  page_size: number
 }

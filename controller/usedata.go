@@ -170,7 +170,24 @@ func getUsageAnalysis(c *gin.Context, self bool) {
 	} else {
 		query.Username = c.Query("username")
 	}
-	analysis, err := model.GetUsageAnalysis(c.Request.Context(), query)
+	var data any
+	switch c.DefaultQuery("view", "analysis") {
+	case "analysis":
+		data, err = model.GetUsageAnalysis(c.Request.Context(), query)
+	case "models":
+		data, err = model.GetUsageModels(c.Request.Context(), query)
+	case "requests":
+		page, pageErr := strconv.Atoi(c.DefaultQuery("page", "1"))
+		pageSize, sizeErr := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+		if pageErr != nil || sizeErr != nil {
+			common.ApiErrorMsg(c, model.ErrUsageOptions.Error())
+			return
+		}
+		data, err = model.GetUsageRequests(c.Request.Context(), query, page, pageSize)
+	default:
+		common.ApiErrorMsg(c, model.ErrUsageOptions.Error())
+		return
+	}
 	if err != nil {
 		if errors.Is(err, model.ErrUsageTimeRange) || errors.Is(err, model.ErrUsageOptions) || errors.Is(err, model.ErrUsageTooLarge) || errors.Is(err, model.ErrUsageOverflow) {
 			common.ApiError(c, err)
@@ -180,5 +197,5 @@ func getUsageAnalysis(c *gin.Context, self bool) {
 		common.ApiErrorMsg(c, "failed to query usage data")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": analysis})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": data})
 }

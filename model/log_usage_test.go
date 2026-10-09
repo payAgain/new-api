@@ -14,6 +14,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/clickhouse"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -74,7 +75,11 @@ func TestUsageTotalsRejectOverflow(t *testing.T) {
 		_, err := normalizeUsageLog(row)
 		assert.ErrorIs(t, err, ErrUsageOverflow)
 	}
-	metrics := UsageMetrics{TotalTokens: math.MaxInt64}
+	metrics := UsageMetrics{Quota: int64(common.MaxWalletQuota)}
+	assert.ErrorIs(t, metrics.add(UsageMetrics{Quota: 1}), ErrUsageOverflow)
+	_, err := normalizeUsageLog(usageLogRow{Quota: -1})
+	assert.ErrorIs(t, err, ErrUsageOverflow)
+	metrics = UsageMetrics{TotalTokens: math.MaxInt64}
 	assert.ErrorIs(t, metrics.add(UsageMetrics{TotalTokens: 1}), ErrUsageOverflow)
 	metrics = UsageMetrics{CacheReadTokens: common.GetPointer(int64(math.MaxInt64))}
 	assert.ErrorIs(t, metrics.add(UsageMetrics{CacheReadTokens: common.GetPointer(int64(1))}), ErrUsageOverflow)
@@ -89,7 +94,6 @@ func TestUsageAnalysisQueryValidation(t *testing.T) {
 	for _, q := range []UsageAnalysisQuery{
 		{StartTimestamp: 0, EndTimestamp: 100, Granularity: "hour"},
 		{StartTimestamp: 100, EndTimestamp: 99, Granularity: "hour"},
-		{StartTimestamp: 100, EndTimestamp: 101 + MaxUsageTimeRange, Granularity: "hour"},
 		{StartTimestamp: 1, EndTimestamp: math.MaxInt64, Granularity: "hour"},
 		{StartTimestamp: 100, EndTimestamp: 200, Granularity: "week"},
 		{StartTimestamp: 100, EndTimestamp: 200, Granularity: "hour", TimezoneOffset: 841},
@@ -103,6 +107,12 @@ func openUsageAnalysisTestDB(t *testing.T, dialect string) *gorm.DB {
 	t.Helper()
 	var driver gorm.Dialector
 	switch dialect {
+	case "clickhouse":
+		dsn := os.Getenv("TEST_CLICKHOUSE_DSN")
+		if dsn == "" {
+			t.Skip("TEST_CLICKHOUSE_DSN is not configured")
+		}
+		driver = clickhouse.Open(dsn)
 	case "sqlite":
 		driver = sqlite.Open(filepath.Join(t.TempDir(), "usage.db"))
 	case "mysql":
@@ -121,7 +131,11 @@ func openUsageAnalysisTestDB(t *testing.T, dialect string) *gorm.DB {
 	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "usage_analysis_test_"}})
 	require.NoError(t, err)
 	require.False(t, db.Migrator().HasTable(&Log{}), "use an isolated test database without stale fixture tables")
-	require.NoError(t, db.AutoMigrate(&Log{}))
+	if dialect == "clickhouse" {
+		require.NoError(t, db.Exec(strings.Replace(clickHouseLogCreateTableSQL(0), "CREATE TABLE IF NOT EXISTS logs", "CREATE TABLE IF NOT EXISTS usage_analysis_test_logs", 1)).Error)
+	} else {
+		require.NoError(t, db.AutoMigrate(&Log{}))
+	}
 	previousLogDB, previousType := LOG_DB, common.LogDatabaseType()
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseType(dialect))
@@ -144,7 +158,7 @@ func openUsageAnalysisTestDB(t *testing.T, dialect string) *gorm.DB {
 }
 
 func TestUsageAnalysisDatabaseMatrix(t *testing.T) {
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres", "clickhouse"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := openUsageAnalysisTestDB(t, dialect)
 			start := time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC).Unix() // Tokyo Oct 9 midnight.
@@ -270,4 +284,98 @@ func TestUsageAnalysisRejectsExcessRows(t *testing.T) {
 	got, err = GetUsageAnalysis(context.Background(), UsageAnalysisQuery{StartTimestamp: 100, EndTimestamp: 100, Granularity: "hour"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(maxUsageLogRows), got.Summary.RequestCount, "the exact row limit remains accepted")
+}
+
+func TestUsageAnalysisHistoricalQuota(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres", "clickhouse"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := openUsageAnalysisTestDB(t, dialect)
+			start := time.Date(2025, 1, 31, 15, 0, 0, 0, time.UTC).Unix()
+			end := time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC).Unix()
+			require.NoError(t, db.Create(&[]Log{
+				{UserId: 1, Type: LogTypeConsume, ModelName: "expensive", CreatedAt: start, Quota: 900, PromptTokens: 10, Other: "not json"},
+				{UserId: 1, Type: LogTypeConsume, ModelName: "cheap", CreatedAt: end, Quota: 100, PromptTokens: 1000},
+				{UserId: 2, Type: LogTypeConsume, ModelName: "private", CreatedAt: start - 86400, Quota: 7000},
+				{UserId: 1, Type: LogTypeError, CreatedAt: start, Quota: 5000},
+			}).Error)
+			got, err := GetUsageAnalysis(context.Background(), UsageAnalysisQuery{StartTimestamp: 1, EndTimestamp: end, Granularity: "day", TimezoneOffset: -540, UserID: 1})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1000), got.Summary.Quota)
+			assert.Equal(t, "month", got.Meta.Granularity)
+			assert.Equal(t, start, got.Meta.StartTimestamp)
+			assert.Equal(t, start, got.Series[0].CreatedAt, "month bucket starts at Tokyo February 1")
+			var bucketQuota int64
+			for _, bucket := range got.Series {
+				bucketQuota += bucket.Quota
+			}
+			assert.Equal(t, got.Summary.Quota, bucketQuota)
+			assert.Equal(t, int64(100), got.Models[0].Quota, "token sort and actual quota are independent")
+			assert.Equal(t, int64(900), got.Models[1].Quota, "invalid token metadata must not hide an actual charge")
+			got, err = GetUsageAnalysis(context.Background(), UsageAnalysisQuery{StartTimestamp: start, EndTimestamp: end, Granularity: "hour", UserID: 1})
+			require.NoError(t, err)
+			assert.Equal(t, int64(1000), got.Summary.Quota)
+		})
+	}
+}
+
+func TestUsageAnalysisModelDetails(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres", "clickhouse"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := openUsageAnalysisTestDB(t, dialect)
+			require.NoError(t, db.Create(&[]Log{
+				{Id: 101, UserId: 1, Username: "alice", Type: LogTypeConsume, ModelName: "model%_a", CreatedAt: 1000, Quota: 100, PromptTokens: 10, CompletionTokens: 5, Other: `{"claude":true,"cache_tokens":60,"cache_creation_tokens":30,"frt":120,"admin_info":{"private":"must-not-leak"}}`, RequestId: "request-1", TokenName: "personal", UseTime: 2, IsStream: true},
+				{Id: 102, UserId: 1, Username: "alice", Type: LogTypeConsume, ModelName: "model%_a", CreatedAt: 1000, Quota: 200, PromptTokens: 20, CompletionTokens: 10, Other: `{"frt":-1}`},
+				{Id: 103, UserId: 2, Username: "bob", Type: LogTypeConsume, ModelName: "model%_a", CreatedAt: 1200, Quota: 9000, PromptTokens: 10000},
+				{Id: 104, UserId: 1, Type: LogTypeConsume, ModelName: "modelZZZa", CreatedAt: 1200, Quota: 9000},
+				{Id: 105, UserId: 1, Type: LogTypeError, ModelName: "model%_a", CreatedAt: 1200},
+				{Id: 106, UserId: 1, Type: LogTypeConsume, ModelName: "historic", CreatedAt: 100},
+			}).Error)
+			q := UsageAnalysisQuery{StartTimestamp: 900, EndTimestamp: 2000, Granularity: "hour", UserID: 1, ModelName: "model%_a"}
+			got, err := GetUsageRequests(context.Background(), q, 1, 1)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), got.Total, "exact model and consume-only self scope")
+			require.Len(t, got.Items, 1)
+			assert.Equal(t, 102, got.Items[0].ID, "same-second calls have deterministic ID ordering")
+			assert.Nil(t, got.Items[0].FirstResponseMS, "invalid timing remains unreported")
+			assert.Nil(t, got.Items[0].CacheReadTokens, "unknown cache is not zero")
+			next, err := GetUsageRequests(context.Background(), q, 2, 1)
+			require.NoError(t, err)
+			require.Len(t, next.Items, 1)
+			assert.Equal(t, 101, next.Items[0].ID)
+			assert.Equal(t, int64(100), next.Items[0].InputTokens, "exclusive Anthropic input includes cache")
+			assert.Equal(t, int64(120), *next.Items[0].FirstResponseMS)
+			assert.Equal(t, "request-1", next.Items[0].RequestID)
+			encoded, err := common.Marshal(next)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "must-not-leak")
+			assert.NotContains(t, string(encoded), "admin_info")
+			summary, err := GetUsageAnalysis(context.Background(), q)
+			require.NoError(t, err)
+			assert.Equal(t, summary.Summary.Quota, got.Items[0].Quota+next.Items[0].Quota)
+			assert.Equal(t, summary.Summary.TotalTokens, got.Items[0].TotalTokens+next.Items[0].TotalTokens)
+			models, err := GetUsageModels(context.Background(), q)
+			require.NoError(t, err)
+			assert.Equal(t, []UsageModelOption{{"modelZZZa", 1200}, {"model%_a", 1000}, {"historic", 100}}, models, "catalog spans retained history without other accounts")
+			q.UserID, q.Username = 0, "bob"
+			all, err := GetUsageRequests(context.Background(), q, 1, 20)
+			require.NoError(t, err)
+			require.Len(t, all.Items, 1)
+			assert.Equal(t, 103, all.Items[0].ID, "admin username remains exact")
+			q.Username = "b%"
+			all, err = GetUsageRequests(context.Background(), q, 1, 20)
+			require.NoError(t, err)
+			assert.Zero(t, all.Total)
+		})
+	}
+}
+
+func TestUsageRequestsRejectInvalidPagination(t *testing.T) {
+	q := UsageAnalysisQuery{StartTimestamp: 1, EndTimestamp: 2000, Granularity: "hour", UserID: 1, ModelName: "model"}
+	for _, pagination := range [][2]int{{0, 20}, {-1, 20}, {250001, 20}, {1, 0}, {1, 101}, {1, -1}} {
+		_, err := GetUsageRequests(context.Background(), q, pagination[0], pagination[1])
+		require.ErrorIs(t, err, ErrUsageOptions)
+	}
+	q.ModelName = ""
+	_, err := GetUsageRequests(context.Background(), q, 1, 20)
+	require.ErrorIs(t, err, ErrUsageOptions, "a single-model request query cannot fall back to all models")
 }

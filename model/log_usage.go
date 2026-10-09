@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
 )
 
 const (
@@ -19,15 +20,16 @@ const (
 )
 
 var (
-	ErrUsageTimeRange = errors.New("invalid usage time range (maximum 31 days)")
+	ErrUsageTimeRange = errors.New("invalid usage time range")
 	ErrUsageOptions   = errors.New("invalid usage query options")
 	ErrUsageTooLarge  = errors.New("too many usage records; select a shorter time range")
 	ErrUsageOverflow  = errors.New("usage totals exceed the supported range")
 )
 
-// UsageMetrics counts recorded usage, not prices or inferred cache savings.
+// UsageMetrics counts recorded usage and actual charged quota, never inferred prices or cache savings.
 // A nil cache value means no valid cache quantity was recorded for the group.
 type UsageMetrics struct {
+	Quota                 int64    `json:"quota"`
 	RequestCount          int64    `json:"request_count"`
 	InputTokens           int64    `json:"input_tokens"`
 	OutputTokens          int64    `json:"output_tokens"`
@@ -79,11 +81,113 @@ type UsageAnalysisQuery struct {
 	ModelName      string
 }
 
+type UsageModelOption struct {
+	ModelName string `json:"model_name"`
+	LastUsed  int64  `json:"last_used"`
+}
+
+// UsageRequest exposes a safe, normalized view of a consume log, not raw metadata.
+type UsageRequest struct {
+	ID              int    `json:"id"`
+	CreatedAt       int64  `json:"created_at"`
+	ModelName       string `json:"model_name"`
+	TokenName       string `json:"token_name"`
+	RequestID       string `json:"request_id"`
+	UseTime         int    `json:"use_time"`
+	IsStream        bool   `json:"is_stream"`
+	FirstResponseMS *int64 `json:"first_response_ms"`
+	UsageMetrics
+}
+
+type UsageRequestPage struct {
+	Items    []UsageRequest `json:"items"`
+	Total    int64          `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+}
+
+// usageLogQuery centralizes exact model filtering and authorized account scope.
+func usageLogQuery(ctx context.Context, q UsageAnalysisQuery) *gorm.DB {
+	query := LOG_DB.WithContext(ctx).Model(&Log{}).
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, q.StartTimestamp, q.EndTimestamp)
+	if q.UserID > 0 {
+		query = query.Where("user_id = ?", q.UserID)
+	}
+	if q.Username != "" {
+		query = query.Where("username = ?", q.Username)
+	}
+	if q.ModelName != "" {
+		query = query.Where("model_name = ?", q.ModelName)
+	}
+	return query
+}
+
+// GetUsageModels lists retained model names even when the selected range is empty.
+func GetUsageModels(ctx context.Context, q UsageAnalysisQuery) ([]UsageModelOption, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	q.StartTimestamp, q.ModelName = 1, ""
+	models := []UsageModelOption{}
+	err := usageLogQuery(ctx, q).Select("model_name, MAX(created_at) AS last_used").
+		Where("model_name <> ?", "").Group("model_name").
+		Order("last_used DESC, model_name ASC").Limit(2049).Scan(&models).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(models) > 2048 {
+		return nil, ErrUsageTooLarge
+	}
+	return models, nil
+}
+
+func GetUsageRequests(ctx context.Context, q UsageAnalysisQuery, page, pageSize int) (*UsageRequestPage, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	if q.ModelName == "" || page < 1 || pageSize < 1 || pageSize > 100 || page > maxUsageLogRows/pageSize+1 {
+		return nil, ErrUsageOptions
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	query := usageLogQuery(ctx, q)
+	result := &UsageRequestPage{Items: []UsageRequest{}, Page: page, PageSize: pageSize}
+	if err := query.Session(&gorm.Session{}).Count(&result.Total).Error; err != nil {
+		return nil, err
+	}
+	var logs []Log
+	if err := query.Select("id, created_at, model_name, token_name, request_id, use_time, is_stream, prompt_tokens, completion_tokens, other, quota").
+		Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	for _, log := range logs {
+		metrics, err := normalizeUsageLog(usageLogRow{log.CreatedAt, log.ModelName, int64(log.PromptTokens), int64(log.CompletionTokens), log.Other, int64(log.Quota)})
+		if err != nil {
+			return nil, err
+		}
+		metrics.recordedCacheRatio()
+		var timing struct {
+			FirstResponseMS *int64 `json:"frt"`
+		}
+		if common.UnmarshalJsonStr(log.Other, &timing) != nil || timing.FirstResponseMS != nil && (*timing.FirstResponseMS < 0 || *timing.FirstResponseMS > int64(common.MaxWalletQuota)) {
+			timing.FirstResponseMS = nil
+		}
+		result.Items = append(result.Items, UsageRequest{
+			ID: log.Id, CreatedAt: log.CreatedAt, ModelName: log.ModelName,
+			TokenName: log.TokenName, RequestID: log.RequestId, UseTime: max(log.UseTime, 0), IsStream: log.IsStream,
+			FirstResponseMS: timing.FirstResponseMS, UsageMetrics: metrics,
+		})
+	}
+	return result, nil
+}
+
 func (q UsageAnalysisQuery) Validate() error {
-	if q.StartTimestamp <= 0 || q.EndTimestamp < q.StartTimestamp || q.EndTimestamp > 253402300799 || q.EndTimestamp-q.StartTimestamp > MaxUsageTimeRange {
+	if q.StartTimestamp <= 0 || q.EndTimestamp < q.StartTimestamp || q.EndTimestamp > 253402300799 {
 		return ErrUsageTimeRange
 	}
-	if q.UserID < 0 || utf8.RuneCountInString(q.Username) > 64 || utf8.RuneCountInString(q.ModelName) > 256 || q.TimezoneOffset < -840 || q.TimezoneOffset > 840 || q.Granularity != "hour" && q.Granularity != "day" {
+	if q.UserID < 0 || utf8.RuneCountInString(q.Username) > 64 || utf8.RuneCountInString(q.ModelName) > 256 || q.TimezoneOffset < -840 || q.TimezoneOffset > 840 || q.Granularity != "hour" && q.Granularity != "day" && q.Granularity != "month" {
 		return ErrUsageOptions
 	}
 	return nil
@@ -95,6 +199,7 @@ type usageLogRow struct {
 	PromptTokens     int64
 	CompletionTokens int64
 	Other            string
+	Quota            int64
 }
 
 type usageLogMetadata struct {
@@ -116,7 +221,10 @@ type usageLogMetadata struct {
 // keeping OpenAI/Gemini cache quantities inside their inclusive input total.
 // Historical cache zeroes mean "recorded zero", never "upstream reported zero".
 func normalizeUsageLog(row usageLogRow) (UsageMetrics, error) {
-	metrics := UsageMetrics{RequestCount: 1}
+	if row.Quota < 0 || row.Quota > int64(common.MaxWalletQuota) {
+		return UsageMetrics{}, ErrUsageOverflow
+	}
+	metrics := UsageMetrics{RequestCount: 1, Quota: row.Quota}
 	metadata := usageLogMetadata{}
 	ambiguous := row.PromptTokens < 0 || row.CompletionTokens < 0
 	if row.Other != "" && common.UnmarshalJsonStr(row.Other, &metadata) != nil {
@@ -200,6 +308,10 @@ func normalizeUsageLog(row usageLogRow) (UsageMetrics, error) {
 }
 
 func (m *UsageMetrics) add(value UsageMetrics) error {
+	if value.Quota < 0 || value.Quota > int64(common.MaxWalletQuota)-m.Quota {
+		return ErrUsageOverflow
+	}
+	m.Quota += value.Quota
 	for _, count := range []struct{ target, incoming *int64 }{
 		{&m.RequestCount, &value.RequestCount}, {&m.InputTokens, &value.InputTokens},
 		{&m.OutputTokens, &value.OutputTokens}, {&m.TotalTokens, &value.TotalTokens},
@@ -246,18 +358,24 @@ func GetUsageAnalysis(ctx context.Context, q UsageAnalysisQuery) (*UsageAnalysis
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	query := LOG_DB.WithContext(ctx).Model(&Log{}).
-		Select("created_at, model_name, prompt_tokens, completion_tokens, other").
-		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, q.StartTimestamp, q.EndTimestamp).
+	query := usageLogQuery(ctx, q).
+		Select("created_at, model_name, prompt_tokens, completion_tokens, other, quota").
 		Limit(maxUsageLogRows + 1)
-	if q.UserID > 0 {
-		query = query.Where("user_id = ?", q.UserID)
+	// Timestamp 1 selects all retained history in the same authorized scope.
+	if q.StartTimestamp == 1 {
+		var first []int64
+		if err := query.Session(&gorm.Session{}).Select("created_at").Order("created_at ASC").Limit(1).Pluck("created_at", &first).Error; err != nil {
+			return nil, err
+		}
+		q.StartTimestamp = q.EndTimestamp
+		if len(first) > 0 {
+			q.StartTimestamp = first[0]
+		}
 	}
-	if q.Username != "" {
-		query = query.Where("username = ?", q.Username)
-	}
-	if q.ModelName != "" {
-		query = query.Where("model_name = ?", q.ModelName)
+	if q.EndTimestamp-q.StartTimestamp > 366*86400 {
+		q.Granularity = "month"
+	} else if q.Granularity == "hour" && q.EndTimestamp-q.StartTimestamp > MaxUsageTimeRange {
+		q.Granularity = "day"
 	}
 	rows, err := query.Rows()
 	if err != nil {
@@ -270,15 +388,20 @@ func GetUsageAnalysis(ctx context.Context, q UsageAnalysisQuery) (*UsageAnalysis
 	}
 	models := map[string]*ModelUsage{}
 	buckets := map[int64]*UsageBucket{}
-	bucketSize := int64(3600)
-	if q.Granularity == "day" {
-		bucketSize = 86400
-	}
-	offsetSeconds := int64(q.TimezoneOffset) * 60
-	localStart := q.StartTimestamp - offsetSeconds
-	firstBucket := localStart - ((localStart%bucketSize + bucketSize) % bucketSize) + offsetSeconds
-	for timestamp := firstBucket; timestamp <= q.EndTimestamp; timestamp += bucketSize {
+	location := time.FixedZone("usage", -q.TimezoneOffset*60)
+	firstBucket := usageBucketStart(q.StartTimestamp, q.Granularity, location)
+	for timestamp := firstBucket; timestamp <= q.EndTimestamp; {
+		if len(buckets) >= 2048 {
+			return nil, ErrUsageTimeRange
+		}
 		buckets[timestamp] = &UsageBucket{CreatedAt: timestamp}
+		if q.Granularity == "month" {
+			timestamp = time.Unix(timestamp, 0).In(location).AddDate(0, 1, 0).Unix()
+		} else if q.Granularity == "day" {
+			timestamp += 86400
+		} else {
+			timestamp += 3600
+		}
 	}
 	for rows.Next() {
 		if result.Summary.RequestCount >= maxUsageLogRows {
@@ -287,12 +410,12 @@ func GetUsageAnalysis(ctx context.Context, q UsageAnalysisQuery) (*UsageAnalysis
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var createdAt, prompt, completion sql.NullInt64
+		var createdAt, prompt, completion, quota sql.NullInt64
 		var name, other sql.NullString
-		if err := rows.Scan(&createdAt, &name, &prompt, &completion, &other); err != nil {
+		if err := rows.Scan(&createdAt, &name, &prompt, &completion, &other, &quota); err != nil {
 			return nil, err
 		}
-		value, err := normalizeUsageLog(usageLogRow{createdAt.Int64, name.String, prompt.Int64, completion.Int64, other.String})
+		value, err := normalizeUsageLog(usageLogRow{createdAt.Int64, name.String, prompt.Int64, completion.Int64, other.String, quota.Int64})
 		if err != nil {
 			return nil, err
 		}
@@ -301,9 +424,7 @@ func GetUsageAnalysis(ctx context.Context, q UsageAnalysisQuery) (*UsageAnalysis
 			modelUsage = &ModelUsage{ModelName: name.String}
 			models[name.String] = modelUsage
 		}
-		localTimestamp := createdAt.Int64 - offsetSeconds
-		// Normalize modulo for timestamps near the epoch in western timezones.
-		bucketTimestamp := localTimestamp - ((localTimestamp%bucketSize + bucketSize) % bucketSize) + offsetSeconds
+		bucketTimestamp := usageBucketStart(createdAt.Int64, q.Granularity, location)
 		bucket := buckets[bucketTimestamp]
 		if bucket == nil {
 			bucket = &UsageBucket{CreatedAt: bucketTimestamp}
@@ -346,4 +467,15 @@ func GetUsageAnalysis(ctx context.Context, q UsageAnalysisQuery) (*UsageAnalysis
 		return 0
 	})
 	return result, nil
+}
+
+func usageBucketStart(timestamp int64, granularity string, location *time.Location) int64 {
+	date := time.Unix(timestamp, 0).In(location)
+	if granularity == "month" {
+		return time.Date(date.Year(), date.Month(), 1, 0, 0, 0, 0, location).Unix()
+	}
+	if granularity == "day" {
+		return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location).Unix()
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), date.Hour(), 0, 0, 0, location).Unix()
 }

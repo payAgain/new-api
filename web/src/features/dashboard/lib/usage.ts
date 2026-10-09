@@ -27,7 +27,8 @@ import type {
 } from '../usage-types'
 
 export function buildUsageFilters(days = 1): UsageFilters {
-  const range = getRollingDateRange(days)
+  const range = getRollingDateRange(days || 1)
+  if (days === 0) range.start = new Date(1000)
   return {
     start: range.start,
     end: range.end,

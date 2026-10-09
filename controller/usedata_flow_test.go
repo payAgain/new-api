@@ -159,7 +159,7 @@ func TestUsageAnalysisControllerIsolationAndValidation(t *testing.T) {
 		{name: "missing range", path: "/api/data/usage/self", self: true, id: 1, status: 200},
 		{name: "malformed timestamp", path: "/api/data/usage/self?start_timestamp=bad&end_timestamp=2000", self: true, id: 1, status: 200},
 		{name: "reversed range", path: "/api/data/usage/self?start_timestamp=2000&end_timestamp=1000", self: true, id: 1, status: 200},
-		{name: "range exceeds month", path: "/api/data/usage/self?start_timestamp=1&end_timestamp=2678402", self: true, id: 1, status: 200},
+		{name: "range exceeding a month retains self isolation", path: "/api/data/usage/self?start_timestamp=1&end_timestamp=2678402&username=bob", self: true, id: 1, status: 200, count: 1, success: true},
 		{name: "invalid granularity", path: "/api/data/usage/self?start_timestamp=1000&end_timestamp=2000&granularity=week", self: true, id: 1, status: 200},
 		{name: "invalid timezone", path: "/api/data/usage/self?start_timestamp=1000&end_timestamp=2000&timezone_offset=841", self: true, id: 1, status: 200},
 		{name: "malformed timezone", path: "/api/data/usage/self?start_timestamp=1000&end_timestamp=2000&timezone_offset=oops", self: true, id: 1, status: 200},
@@ -189,4 +189,54 @@ func TestUsageAnalysisControllerIsolationAndValidation(t *testing.T) {
 			}
 		})
 	}
+	for _, view := range []string{"models", "requests"} {
+		for _, tc := range []struct {
+			name             string
+			self             bool
+			id, role, status int
+			success          bool
+			suffix           string
+		}{
+			{"self scope", true, 1, common.RoleCommonUser, 200, true, "&username=bob&user_id=2&model_name=gpt-a"},
+			{"self cannot widen to another model", true, 1, common.RoleCommonUser, 200, true, "&model_name=gpt-b"},
+			{"admin all", false, 1, common.RoleAdminUser, 200, true, "&model_name=gpt-b"},
+			{"anonymous", true, 0, 0, 401, false, "&model_name=gpt-a"},
+			{"non-admin", false, 1, common.RoleCommonUser, 403, false, "&model_name=gpt-b"},
+			{"invalid query", true, 1, common.RoleCommonUser, 200, false, "&model_name=gpt-a&timezone_offset=bad"},
+		} {
+			t.Run(view+"/"+tc.name, func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(rec)
+				ctx.Set("id", tc.id)
+				ctx.Set("role", tc.role)
+				ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/usage?start_timestamp=1&end_timestamp=2000&view="+view+tc.suffix, nil)
+				if tc.self {
+					GetSelfUsageAnalysis(ctx)
+				} else {
+					GetAllUsageAnalysis(ctx)
+				}
+				require.Equal(t, tc.status, rec.Code)
+				var response struct {
+					Success bool `json:"success"`
+					Data    any  `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(rec.Body.Bytes(), &response))
+				assert.Equal(t, tc.success, response.Success, rec.Body.String())
+				assert.NotContains(t, rec.Body.String(), "admin_info")
+				assert.NotContains(t, rec.Body.String(), "private-diagnostic")
+				if tc.success && tc.self {
+					assert.NotContains(t, rec.Body.String(), "gpt-b")
+				}
+			})
+		}
+	}
+	for _, suffix := range []string{"view=invalid", "view=requests", "view=requests&model_name=gpt-a&page=oops", "view=requests&model_name=gpt-a&page_size=101"} {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		ctx.Set("id", 1)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/usage/self?start_timestamp=1&end_timestamp=2000&"+suffix, nil)
+		GetSelfUsageAnalysis(ctx)
+		assert.Contains(t, rec.Body.String(), `"success":false`)
+	}
+
 }

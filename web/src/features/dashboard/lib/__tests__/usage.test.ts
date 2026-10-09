@@ -30,6 +30,7 @@ import {
 } from '../usage'
 
 const metrics: UsageMetrics = {
+  quota: 0,
   request_count: 1,
   input_tokens: 100,
   output_tokens: 20,
