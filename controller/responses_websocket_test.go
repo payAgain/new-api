@@ -804,6 +804,10 @@ func TestResponsesWebSocketCancelErrorDoesNotFinishActiveRequest(t *testing.T) {
 }
 
 func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing.T) {
+	previousErrorLogs := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = previousErrorLogs })
+	t.Setenv("ERROR_DIAGNOSTICS_ENABLED", "true")
 	for _, tc := range []struct {
 		name, upstream, wantType, wantMessage string
 		status                                int
@@ -865,6 +869,21 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 			}
 			fixture.closeAndWait(t)
 			assertResponsesWSAccounting(t, fixture, nil)
+			var failure model.Log
+			require.NoError(t, model.LOG_DB.Where("type = ? AND user_id = ?", model.LogTypeError, fixture.user.Id).First(&failure).Error)
+			var stored struct {
+				RootInfo struct {
+					Diagnostics common.RelayDiagnosticSnapshot `json:"error_diagnostics"`
+				} `json:"root_info"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(failure.Other, &stored))
+			diagnostics := stored.RootInfo.Diagnostics
+			assert.Contains(t, diagnostics.ClientRequest.Body.Data, `"type":"response.create"`)
+			require.Len(t, diagnostics.Attempts, 1)
+			assert.Equal(t, http.StatusSwitchingProtocols, diagnostics.Attempts[0].Response.Status)
+			assert.Equal(t, "Bearer upstream-first", diagnostics.Attempts[0].Request.Headers.Get("Authorization"))
+			assert.Contains(t, diagnostics.Attempts[0].Request.Body.Data, `"input":"hi"`)
+			assert.Contains(t, diagnostics.Attempts[0].Response.Body.Data, tc.upstream)
 		})
 	}
 }

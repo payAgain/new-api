@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -151,12 +152,26 @@ func TestChatFailoverCooldownAndExpiredSessionRefresh(t *testing.T) {
 	expired := first
 	expired.AccessToken = "expired"
 	p = fixturePool(client, expired)
-	response, err := p.Chat(context.Background(), "model", []byte(`{"messages":[]}`))
+	t.Setenv("ERROR_DIAGNOSTICS_ENABLED", "true")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	diagnostics := common.EnableRelayDiagnostics(ctx)
+	diagnostics.BeginAttempt(64, "fixture WorkBuddy", "model", "openai")
+	response, err := p.Chat(ctx.Request.Context(), "model", []byte(`{"messages":[]}`))
 	require.NoError(t, err)
 	require.Equal(t, 200, response.StatusCode)
+	_, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
 	response.Body.Close()
 	require.Equal(t, 1, refreshes)
 	require.Equal(t, "rotated", p.config.Accounts[0].AccessToken)
+	trace := diagnostics.Snapshot("fixture", "", "", 200)
+	require.Len(t, trace.Attempts, 3, "expired session, credential refresh and retry have separate exchanges")
+	require.Equal(t, 401, trace.Attempts[0].Response.Status)
+	require.Equal(t, "Bearer expired", trace.Attempts[0].Request.Headers.Get("Authorization"))
+	require.Contains(t, trace.Attempts[1].Response.Body.Data, "rotated")
+	require.Equal(t, "Bearer rotated", trace.Attempts[2].Request.Headers.Get("Authorization"))
+	require.Contains(t, trace.Attempts[2].Response.Body.Data, "[DONE]")
 }
 func TestNonStreamingAggregationPreservesToolsReasoningAndUsage(t *testing.T) {
 	stream := ": keepalive\r\n\r\ndata: {\"id\":\"chat-test\",\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"你\",\"reasoning_content\":\"reason\",\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\"}}]}}]}\r\n\r\n" +
