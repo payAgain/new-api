@@ -405,12 +405,25 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		}
 		dialer.Proxy = http.ProxyURL(proxyURL)
 	}
+	diagnosticRequest, requestErr := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, fullRequestURL, nil)
+	if requestErr == nil {
+		diagnosticRequest.Header = targetHeader.Clone()
+		common2.GetRelayDiagnostics(c).SetAttemptModel(info.GetUpstreamModelName(), string(info.GetFinalRequestRelayFormat()))
+		common2.GetRelayDiagnostics(c).CaptureRequest(diagnosticRequest)
+	}
 	targetConn, resp, err := dialer.DialContext(c.Request.Context(), fullRequestURL, targetHeader)
+	common2.GetRelayDiagnostics(c).CaptureResponse(resp, err)
+	if resp != nil {
+		c.Set(common2.UpstreamRequestIdKey, common2.UpstreamRequestID(resp.Header))
+	}
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if resp != nil {
 			statusCode = resp.StatusCode
 			if resp.Body != nil {
+				if common2.GetRelayDiagnostics(c) != nil {
+					_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+				}
 				_ = resp.Body.Close()
 			}
 		}
@@ -559,7 +572,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	if info.ChannelMeta != nil {
+		common2.GetRelayDiagnostics(c).SetAttemptModel(info.UpstreamModelName, string(info.GetFinalRequestRelayFormat()))
+	}
+	common2.GetRelayDiagnostics(c).CaptureRequest(req)
 	resp, err := relayClient.Do(req)
+	common2.GetRelayDiagnostics(c).CaptureResponse(resp, err)
 	if err != nil {
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
@@ -579,7 +597,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		))
 	}
 
-	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
+	if upID := common2.UpstreamRequestID(resp.Header); upID != "" {
 		c.Set(common2.UpstreamRequestIdKey, upID)
 	}
 

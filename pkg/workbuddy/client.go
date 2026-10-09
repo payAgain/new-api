@@ -151,7 +151,9 @@ func (c Client) do(ctx context.Context, credential Credential, billing bool, met
 	if credential.Region() == "global" && path == "/v3/config" {
 		req.Header.Set("User-Agent", "WorkBuddy/5.5.2")
 	}
+	common.GetRelayDiagnostics(ctx).CaptureRequest(req)
 	response, err := c.HTTP.Do(req)
+	common.GetRelayDiagnostics(ctx).CaptureResponse(response, err)
 	if err != nil {
 		return nil, errors.New("WorkBuddy upstream transport failed")
 	}

@@ -52,6 +52,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { CodeBlock } from '@/components/ai-elements/code-block'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -90,6 +91,7 @@ import {
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
+import { ErrorDiagnosticsPanel } from './error-diagnostics'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -480,6 +482,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const other = parseLogOther(props.log.other)
   const typeConfig = getLogTypeConfig(props.log.type)
 
+  const diagnostics = props.isRoot
+    ? other?.root_info?.error_diagnostics
+    : undefined
   const isViolation = isViolationFeeLog(other)
   const isRefund = props.log.type === 6
   const isConsume = props.log.type === 2
@@ -639,12 +644,14 @@ export function DetailsDialog(props: DetailsDialogProps) {
       contentClassName={cn(
         'min-w-0 overflow-hidden',
         'max-sm:max-h-(--dialog-available-height) max-sm:w-[calc(100vw-1.5rem)] max-sm:max-w-[calc(100vw-1.5rem)] max-sm:p-4',
-        isTieredBilling ? 'sm:max-w-4xl lg:max-w-5xl' : 'sm:max-w-lg'
+        isTieredBilling || diagnostics
+          ? 'sm:max-w-4xl lg:max-w-5xl'
+          : 'sm:max-w-lg'
       )}
       headerClassName='max-sm:gap-1'
       titleClassName='flex items-center gap-2 text-base'
       descriptionClassName='sr-only'
-      contentHeight='min(72dvh, 720px)'
+      contentHeight={diagnostics ? 'min(80dvh, 1120px)' : 'min(72dvh, 720px)'}
       bodyClassName='pr-2 sm:pr-4'
     >
       <div className='w-full max-w-full min-w-0 space-y-2.5 overflow-x-hidden py-1 sm:space-y-3'>
@@ -749,6 +756,30 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
         </div>
 
+        {diagnostics && (
+          <ErrorDiagnosticsPanel
+            key={`${props.log.request_id}:${props.log.id}`}
+            diagnostics={diagnostics}
+          />
+        )}
+        {props.isRoot && props.log.type === 5 && !diagnostics && (
+          <p className='text-muted-foreground text-xs'>
+            {t('No detailed capture is stored for this entry.')}
+          </p>
+        )}
+        {props.isAdmin && props.log.type === 5 && other?.error_code && (
+          <DetailRow label={t('Error code')} value={other.error_code} mono />
+        )}
+        {props.isAdmin && adminInfo?.conversion_diagnostics?.length ? (
+          <DetailSection label={t('Conversion diagnostics')}>
+            <CodeBlock
+              code={JSON.stringify(adminInfo.conversion_diagnostics, null, 2)}
+              language='json'
+              maxExpandedLines={12}
+              showToolbar
+            />
+          </DetailSection>
+        ) : null}
         {/* Request conversion (admin only, not for refund) */}
         {showConversion && (
           <DetailSection label={t('Request Conversion')}>

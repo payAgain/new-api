@@ -129,7 +129,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendFinalRequestFormat(relayInfo, other)
 	appendBillingInfo(relayInfo, other)
 	appendParamOverrideInfo(relayInfo, other)
-	appendStreamStatus(relayInfo, other)
+	appendStreamStatus(ctx, relayInfo, other)
 	return other
 }
 
@@ -153,7 +153,7 @@ func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other *model.LogO
 	other.SetPublic("po", relayInfo.ParamOverrideAudit)
 }
 
-func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+func appendStreamStatus(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
 	if relayInfo == nil || other == nil || !relayInfo.IsStream || relayInfo.StreamStatus == nil {
 		return
 	}
@@ -181,6 +181,16 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther)
 		streamInfo["errors"] = messages
 	}
 	other.SetPublic("stream_status", streamInfo)
+	if status == "error" {
+		if diagnostics := common.GetRelayDiagnostics(ctx); diagnostics != nil {
+			message := "stream ended: " + string(ss.EndReason)
+			if ss.EndError != nil {
+				message = ss.EndError.Error()
+			}
+			diagnostics.FinishAttempt(message)
+			other.SetRoot("error_diagnostics", diagnostics.Snapshot(message, "stream_error", "stream_error", 200))
+		}
+	}
 }
 
 func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {

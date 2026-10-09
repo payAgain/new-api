@@ -73,27 +73,56 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
-		userId := c.GetInt("id")
-		tokenName := c.GetString("token_name")
-		modelName := c.GetString("original_model")
-		tokenId := c.GetInt("token_id")
-		userGroup := c.GetString("group")
-		other := model.NewLogOther()
-		if c.Request != nil && c.Request.URL != nil {
-			other.SetPublic("request_path", c.Request.URL.Path)
-		}
-		other.SetPublic("error_type", err.GetErrorType())
-		other.SetPublic("error_code", err.GetErrorCode())
-		other.SetPublic("status_code", err.StatusCode)
-		AppendRelayLogAdminInfo(c, relayInfo, other)
-		AppendResponseModelLogInfo(relayInfo, other)
-		AppendTaskPluginContextAuditInfo(c, other)
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+	if types.IsRecordErrorLog(err) {
+		recordRelayFailure(c, err, relayInfo, channelError.ChannelId)
 	}
+}
+
+const recordedRelayErrorKey = "recorded_relay_error"
+
+// RecordRelayFailure also covers validation, billing and routing failures that
+// never reach a channel attempt. A final handler can call it without duplicating
+// the same error already recorded by ProcessChannelError.
+func RecordRelayFailure(c *gin.Context, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
+	recordRelayFailure(c, err, relayInfo, c.GetInt("channel_id"))
+}
+
+func recordRelayFailure(c *gin.Context, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, channelID int) {
+	if err == nil || !constant.ErrorLogEnabled {
+		return
+	}
+	if recorded, _ := c.Get(recordedRelayErrorKey); recorded == err {
+		return
+	}
+	other := model.NewLogOther()
+	appendRequestPath(c, relayInfo, other)
+	other.SetPublic("error_type", err.GetErrorType())
+	other.SetPublic("error_code", err.GetErrorCode())
+	other.SetPublic("status_code", err.StatusCode)
+	AppendRelayLogAdminInfo(c, relayInfo, other)
+	AppendResponseModelLogInfo(relayInfo, other)
+	AppendTaskPluginContextAuditInfo(c, other)
+	appendRequestConversionChain(relayInfo, other)
+	appendFinalRequestFormat(relayInfo, other)
+	appendParamOverrideInfo(relayInfo, other)
+	appendStreamStatus(c, relayInfo, other)
+	if relayInfo != nil && relayInfo.ChannelMeta != nil && relayInfo.IsModelMapped {
+		other.SetPublic("is_model_mapped", true)
+		other.SetPublic("upstream_model_name", relayInfo.UpstreamModelName)
+	}
+	if diagnostics := common.GetRelayDiagnostics(c); diagnostics != nil {
+		diagnostics.FinishAttempt(err.Error())
+		other.SetRoot("error_diagnostics", diagnostics.Snapshot(err.Error(), string(err.GetErrorCode()), string(err.GetErrorType()), err.StatusCode))
+	}
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	model.RecordErrorLog(c, c.GetInt("id"), channelID, c.GetString("original_model"), c.GetString("token_name"), err.MaskSensitiveErrorWithStatusCode(), c.GetInt("token_id"), int(time.Since(startTime).Seconds()), common.GetContextKeyBool(c, constant.ContextKeyIsStream), c.GetString("group"), other)
+	c.Set(recordedRelayErrorKey, err)
+}
+
+func HasRecordedRelayFailure(c *gin.Context) bool {
+	_, exists := c.Get(recordedRelayErrorKey)
+	return exists
 }

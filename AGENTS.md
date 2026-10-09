@@ -99,6 +99,23 @@ DO NOT send optional commentary
 - 用户反馈现有错误日志无法定位问题，要求评估记录覆盖、上游错误详情、请求关联及后台展示是否足够。此次先做代码与现有记录的只读评估；日志改造、扩大敏感数据采集及线上配置调整应根据评估结果另行开展。
 - 模型调用明细只读计费消费日志是原有约定，错误排查应检查完整使用日志与服务端日志，不将该分析页当作全部请求或错误审计。
 
+### 失败请求详细诊断（2026-10-09）
+
+- 用户在日志评估后明确要求实现针对报错请求的详细采集，方便直接诊断并修改，并明确表示这是个人使用、不需要脱敏。此要求取代此前建议对诊断摘要脱敏的方案。
+- 新诊断记录原始客户端请求、实际转发的请求、上游原始响应、连接与正文读取错误、请求 ID、渠道和模型、状态码以及逐次上游调用；原始诊断内容不执行脱敏。详细数据放在现有 `other.root_info.error_diagnostics`，沿用服务端 root 权限隔离；普通用户、自助 Token 日志和非 root 管理员接口不返回这份原始数据。已有对外错误响应及独立认证审计规则沿用。
+- 详细数据仅为失败请求（含流式中途失败）持久化，成功请求完整正文不入库。HTTP / SSE 和原生 WorkBuddy 的内部请求接入采集，Responses WebSocket 按每个调用独立采集；不把采集的字节数量当作计费 Token。
+- 使用有限的采集容量保证转发不受大正文影响：默认每份正文 1024 KiB、每请求合计 4096 KiB、最多 16 次上游调用，超出明确标记截断或省略次数。环境变量为 `ERROR_DIAGNOSTICS_ENABLED`、`ERROR_DIAGNOSTICS_MAX_BODY_KB`、`ERROR_DIAGNOSTICS_MAX_TOTAL_KB`、`ERROR_DIAGNOSTICS_MAX_ATTEMPTS`；保留 `ERROR_LOG_ENABLED` 总开关，本 fork 默认开启错误入库。
+- 在已有日志详情中展示原始请求、上游调用过程及可复制的诊断 JSON，展示渠道状态映射前的上游状态码与返回客户端的状态码。不依赖全局 DEBUG，不提供自动重放请求或自动修改配置。
+- 此功能在 `feat/error-diagnostics` 开发，本次不自动合并主线、推送或部署 VPS。历史未采集的错误不能补回原始正文。
+- 本轮已验证 SQLite 3.50.4、MySQL 8.0.46、PostgreSQL 16.15 的真实错误入库、原始响应与渠道状态映射、去重及 root / 管理员 / 用户可见性；临时数据库容器已清理，未修改生产实例。后端 controller、router、service、middleware、channel、WorkBuddy 相关回归及诊断并发检查通过，另验证 Responses WebSocket 原始事件与退款、WorkBuddy 失效凭据刷新和逐次请求采集。
+- 使用日志前端 411 项测试、改动文件 lint / 格式检查、类型检查及生产构建通过；Mac 和 Linux amd64 构建通过。浏览器验收覆盖真实本地上游失败、重试切换、原始鉴权头、诊断 JSON 复制、截断与旧日志提示、深浅主题和手机端，无运行时错误；截图使用隔离实例及明确标记的示例重试数据。证据保存在运维工作区 `work/error-diagnostics-validation/`。原始诊断沿用 root 身份与会话鉴权；访问隔离验证参考 OWASP Authentication、Session Management、Logging Cheat Sheets，未改动登录或独立认证审计的采集规则。
+
+### 新功能合并与部署授权（2026-10-10）
+
+- 用户进一步确认，只需错误及异常调用保存详细诊断，正常调用继续保留模型、Token、缓存、额度和耗时等统计，不保存完整请求与响应。流式中途异常的诊断可以附在已计费消费日志中；失败重试可能产生多条错误记录。单条采集容量限制不代表历史保留期限或总日志容量限制，本次未要求新增自动清理策略。
+- 用户明确要求把新开发的功能合入自己的主线并更新当前 VPS New API，授权本次按 `feat/error-diagnostics → develop → main` 本地合并和部署新的定制镜像。此次上线包含主线上尚未部署的历史额度 / 单模型详细分析，以及失败请求详细诊断；版本沿用 `v1.0.0-rc.42`，以发布 SHA 和实际 image ID 区分构建，不自动升级上游基线。
+- 此授权取代上一轮“不自动合并或部署”的本轮限制，不授权推送远程、创建 PR、开启 vm2api 管理接入、迁移现有 WorkBuddy 渠道或拆除桥接。部署前完成新备份及隔离恢复，确认原数据库与依赖配置兼容，按已验证的优雅退出流程切换并保留上一版回滚镜像。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
