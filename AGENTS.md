@@ -47,7 +47,16 @@ DO NOT send optional commentary
 - 用户随后明确暂停此需求并要求保留该分支；不得将调研或未实现的管理转发功能混入本次发布。
 - 用户最后明确要求更新当前 VPS New API，授权部署已验证的本地主线 `1deb850ee0ea370605b2514d442b52020b8a17e2` 的定制 `v1.0.0-rc.42` 镜像。此前暂不升级的指令已被本次部署要求取代；vm2api 本身的升级仍不在本次范围。
 
-### 当前部署状态（2026-10-09）
+### 当前部署状态（2026-10-10）
+
+- 已按用户要求将 `feat/error-diagnostics` 合入 `develop`，再合入 `main`，发布源码 `c4465b04a7cd1d1272eba76b347324473decd347`；2026-10-10 02:33（Asia/Tokyo）上线验收完成，产品版本继续为 `v1.0.0-rc.42`。此后部署记录的文档提交不等于线上镜像的构建来源。
+- 镜像标签 `new-api-custom:c4465b04a7cd`，实际 image ID `sha256:38ce7cf391fe93cdaec658aa3e1c8147d62df867914437ebdbff4fdd49eab0f1`。包含主线上已验证的历史模型额度 / 单模型选择与调用分析，以及原始失败诊断；普通成功消费日志不保存完整请求响应。本次未推送远程或创建 PR。
+- 新备份真实恢复到隔离 PostgreSQL 15.19，新版 master 两次启动、新旧应用读取兼容、既有结构 / 索引 / 约束 / 业务表摘要均通过；历史精确模型额度与 SQL、分页权限隔离、无效请求 raw 诊断与 root 可见性及普通成功日志无 raw 正文均通过。对应源码的 SQLite / MySQL / PostgreSQL、前端与视觉验收已有记录。
+- 线上 Docker healthy / restart 0，客户端公网和八个构建资源的字节通过；只替换 New API，PG / Redis / vm2api / .env / Caddy 及路由结构保持。验证令牌可见 6 个模型，切换前后相同，不将此令牌范围与历史 11 模型验收数量直接比较。没有发送额外推理或创建生产管理员凭据。隔离容器和临时凭据已清理。
+- 完整备份已下载到项目之外的 700 / 600 受限目录并核对 SHA256；保留 `new-api-rollback:20261010-1deb850-rc42` 作为上一版定制 rc.42 回滚镜像，不能恢复旧数据库覆盖后续业务。部署证据在运维目录 `work/new-api-release-c4465b0/deployment.json` 和 VPS `/opt/tokyo-maintenance/new-api-20261010-c4465b04a-deploy/report.json`。
+- 既有 WorkBuddy 渠道 13 仍使用旧桥接，未自动迁移账号或拆除隧道。`feat/vm2api-admin` 保持暂停并保留。
+
+### 上一轮部署记录（2026-10-09）
 
 - 已按用户最后的升级要求，将本地主线源码提交 `1deb850ee0ea370605b2514d442b52020b8a17e2` 的定制 `v1.0.0-rc.42` 部署至 VPS；2026-10-09 15:27（Asia/Tokyo）验收完成。版本号沿用上游。
 - 当前镜像标签 `new-api-custom:1deb850ee0ea`，实际 image ID 为 `sha256:65deab104548ba5214f2f5fc127dbebd302dd55a9662086f4278e40ba0528912`。本次仅替换 New API 容器，数据库结构、既有渠道与模型路由以及 PostgreSQL、Redis、vm2api 容器保持。
