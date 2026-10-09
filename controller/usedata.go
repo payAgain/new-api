@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -128,4 +129,56 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 		"data":    dates,
 	})
 	return
+}
+
+func GetAllUsageAnalysis(c *gin.Context) {
+	if c.GetInt("role") < common.RoleAdminUser {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "message": "insufficient permission"})
+		return
+	}
+	getUsageAnalysis(c, false)
+}
+
+func GetSelfUsageAnalysis(c *gin.Context) {
+	if c.GetInt("id") <= 0 {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication required"})
+		return
+	}
+	getUsageAnalysis(c, true)
+}
+
+func getUsageAnalysis(c *gin.Context, self bool) {
+	start, startErr := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	end, endErr := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	if startErr != nil || endErr != nil {
+		common.ApiErrorMsg(c, model.ErrUsageTimeRange.Error())
+		return
+	}
+	offset, err := strconv.Atoi(c.DefaultQuery("timezone_offset", "0"))
+	if err != nil {
+		common.ApiErrorMsg(c, model.ErrUsageOptions.Error())
+		return
+	}
+	query := model.UsageAnalysisQuery{
+		StartTimestamp: start, EndTimestamp: end,
+		Granularity: c.DefaultQuery("granularity", "hour"), TimezoneOffset: offset,
+		ModelName: c.Query("model_name"),
+	}
+	if self {
+		// User-supplied user_id/username cannot widen a self query.
+		query.UserID = c.GetInt("id")
+	} else {
+		query.Username = c.Query("username")
+	}
+	analysis, err := model.GetUsageAnalysis(c.Request.Context(), query)
+	if err != nil {
+		if errors.Is(err, model.ErrUsageTimeRange) || errors.Is(err, model.ErrUsageOptions) || errors.Is(err, model.ErrUsageTooLarge) || errors.Is(err, model.ErrUsageOverflow) {
+			common.ApiError(c, err)
+			return
+		}
+		common.SysError("failed to query usage analysis: " + err.Error())
+		common.ApiErrorMsg(c, "failed to query usage data")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": analysis})
 }
