@@ -114,9 +114,68 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+export interface DiagnosticBody {
+  data: string
+  encoding: string
+  bytes: number
+  captured_bytes: number
+  truncated: boolean
+  read_error?: string
+}
+
+export interface DiagnosticExchange {
+  method?: string
+  url?: string
+  headers?: Record<string, string[]>
+  headers_truncated?: boolean
+  status?: number
+  protocol?: string
+  body: DiagnosticBody
+}
+
+export interface DiagnosticAttempt {
+  id?: number
+  channel_id: number
+  channel_name?: string
+  model?: string
+  request_format?: string
+  upstream_request_id?: string
+  elapsed_ms: number
+  error?: string
+  request: DiagnosticExchange
+  response: DiagnosticExchange
+}
+
+export interface ErrorDiagnostics {
+  request_id?: string
+  version: number
+  stage: string
+  error: string
+  status: number
+  error_code?: string
+  error_type?: string
+  elapsed_ms: number
+  client_request: DiagnosticExchange
+  client_response: DiagnosticExchange
+  attempts: DiagnosticAttempt[]
+  omitted_attempts?: number
+}
+
 export interface LogOtherData {
+  error_type?: string
+  error_code?: string
+  status_code?: number
   admin_info?: {
     request_policy?: PolicyEvent[]
+    conversion_diagnostics?: Array<{
+      code: string
+      path?: string
+      message: string
+      severity: string
+      from: string
+      to: string
+    }>
+    conversion_diagnostics_truncated?: boolean
     is_multi_key?: boolean
     multi_key_index?: number
     use_channel?: number[]
@@ -149,6 +208,7 @@ export interface LogOtherData {
     task_plugin?: TaskPluginInfo
   }
   root_info?: {
+    error_diagnostics?: ErrorDiagnostics
     task_plugin?: TaskPluginRuntimeInfo
     upstream_task_id?: string
     node_name?: string

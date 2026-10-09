@@ -215,6 +215,10 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		if parseErr != nil {
 			return newResponsesWSInvalidRequestError(parseErr)
 		}
+		if common.GetRelayDiagnostics(c) != nil {
+			_, _ = io.Copy(io.Discard, c.Request.Body)
+			_ = c.Request.Body.Close()
+		}
 		c.Request.Body = io.NopCloser(bytes.NewReader(create.Body))
 		c.Request.ContentLength = int64(len(create.Body))
 		return s.runCall(c, state, create)
@@ -275,6 +279,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr != nil {
 			return apiErr
 		}
+		common.GetRelayDiagnostics(c).CaptureWebSocketFrame(true, payload, nil)
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 			state.closeAfter = true
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -304,6 +309,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			}
 			info.RetryIndex = retry.GetRetry()
 			policy.BeginAttempt(channel, info.UsingGroup)
+			c.Set(common.UpstreamRequestIdKey, "")
+			common.GetRelayDiagnostics(c).BeginAttempt(channel.Id, channel.Name, info.OriginModelName, string(info.RelayFormat))
 			var payload []byte
 			payload, apiErr = buildResponsesWSCreatePayload(c, info, create.Request, create.Generate, create.StreamID)
 			if apiErr != nil {
@@ -327,6 +334,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if !s.setTarget(target) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			common.GetRelayDiagnostics(c).CaptureWebSocketFrame(true, payload, nil)
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 				state.closeAfter = true
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -373,6 +381,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	for {
 		select {
 		case incoming := <-state.inbox:
+			common.GetRelayDiagnostics(c).CaptureWebSocketFrame(false, incoming.body, incoming.err)
 			idle.Reset(timeout)
 			if incoming.err != nil {
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, incoming.err)
@@ -592,6 +601,7 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	common.SetContextKey(c, appconstant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 	policy := service.RequestPolicy(c)
 	policy.BeginAttempt(channel, s.lockedGroup)
+	common.GetRelayDiagnostics(c).BeginAttempt(channel.Id, channel.Name, model, string(types.RelayFormatOpenAIResponses))
 	policy.AddEvent(service.PolicyEvent{ChannelID: channel.Id, Decision: service.PolicyDecision{Action: "select", Reason: "pinned_channel", Source: "channel_constraint"}})
 	return nil
 }

@@ -34,8 +34,9 @@ import {
 } from '@/stores/system-config-store'
 
 import type { UsageLog } from '../../data/schema'
-import type { LogOtherData } from '../../types'
+import type { ErrorDiagnostics, LogOtherData } from '../../types'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
+import { DetailsDialog } from '../dialogs/details-dialog'
 
 vi.mock('@lobehub/icons', () => ({}))
 vi.hoisted(() => {
@@ -380,3 +381,145 @@ test.each(['missing schema', 'unsupported expression', 'unknown tier'])(
     expect(preview.textContent).toBe('Dynamic Pricing · No matching results')
   }
 )
+
+const diagnosticBody = {
+  data: '{"messages":[{"role":"user","content":"original fixture prompt"}]}',
+  encoding: 'utf-8',
+  bytes: 74,
+  captured_bytes: 74,
+  truncated: false,
+}
+const errorDiagnostics: ErrorDiagnostics = {
+  version: 1,
+  stage: 'upstream_response',
+  error: 'invalid fixture request',
+  status: 502,
+  error_code: 'fixture_unsupported',
+  error_type: 'openai_error',
+  elapsed_ms: 842,
+  client_request: {
+    method: 'POST',
+    url: '/v1/responses',
+    headers: { Authorization: ['Bearer fixture-owner-only'] },
+    body: diagnosticBody,
+  },
+  client_response: { status: 502, body: { ...diagnosticBody, data: '' } },
+  attempts: [
+    {
+      channel_id: 11,
+      channel_name: 'Fixture A',
+      model: 'fixture-model',
+      elapsed_ms: 210,
+      request: {
+        method: 'POST',
+        url: 'https://fixture-a.example/v1/responses',
+        body: diagnosticBody,
+      },
+      response: {
+        status: 429,
+        body: { ...diagnosticBody, data: 'fixture rate limit' },
+      },
+    },
+    {
+      channel_id: 12,
+      channel_name: 'Fixture B',
+      model: 'upstream-fixture-model',
+      elapsed_ms: 632,
+      request: {
+        method: 'POST',
+        url: 'https://fixture-b.example/v1/chat/completions',
+        body: { ...diagnosticBody, data: '{"messages":[]}' },
+      },
+      response: {
+        status: 400,
+        headers: { 'X-Request-Id': ['fixture-upstream-id'] },
+        body: { ...diagnosticBody, data: 'fixture unsupported messages' },
+      },
+      upstream_request_id: 'fixture-upstream-id',
+    },
+  ],
+}
+function renderErrorDialog(
+  isRoot = true,
+  diagnostics: ErrorDiagnostics | null = errorDiagnostics
+) {
+  const log = {
+    ...makeLog({
+      error_code: 'fixture_unsupported',
+      status_code: 502,
+      root_info: { error_diagnostics: diagnostics ?? undefined },
+    }),
+    type: 5,
+    content: 'legacy fixture summary',
+  }
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>
+        <DetailsDialog
+          log={log}
+          isAdmin
+          isRoot={isRoot}
+          open
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+}
+
+test('root error details show original data and allow switching between upstream attempts', async () => {
+  renderErrorDialog()
+  const dialog = within(await screen.findByRole('dialog'))
+  expect(dialog.getByText('Error diagnostics')).toBeVisible()
+  expect(dialog.getByText('fixture unsupported messages')).toBeVisible()
+  expect(
+    dialog.getByText('POST https://fixture-b.example/v1/chat/completions')
+  ).toBeVisible()
+  fireEvent.click(dialog.getByRole('tab', { name: 'Attempt 1' }))
+  expect(dialog.getByText('fixture rate limit')).toBeVisible()
+  fireEvent.click(dialog.getByRole('tab', { name: 'Original request' }))
+  expect(dialog.getByText(/Bearer fixture-owner-only/)).toBeVisible()
+  expect(dialog.getByText(/original fixture prompt/)).toBeVisible()
+  expect(
+    dialog.getByRole('button', { name: 'Copy diagnostic report' })
+  ).toBeVisible()
+})
+
+test('non-root log details hide raw diagnostics even when a payload contains root metadata', async () => {
+  renderErrorDialog(false)
+  const dialog = within(await screen.findByRole('dialog'))
+  expect(dialog.queryByText('Error diagnostics')).not.toBeInTheDocument()
+  expect(dialog.queryByText(/fixture-owner-only/)).not.toBeInTheDocument()
+  expect(dialog.getByText('legacy fixture summary')).toBeVisible()
+})
+
+test('truncated diagnostic bodies show an explicit capture limit message', async () => {
+  renderErrorDialog(true, {
+    ...errorDiagnostics,
+    attempts: [
+      {
+        ...errorDiagnostics.attempts[1],
+        response: {
+          ...errorDiagnostics.attempts[1].response,
+          body: {
+            ...diagnosticBody,
+            data: 'captured fixture prefix',
+            bytes: 100000,
+            captured_bytes: 23,
+            truncated: true,
+          },
+        },
+      },
+    ],
+  })
+  expect(await screen.findByText('Capture limit reached')).toBeVisible()
+  expect(screen.getByText('captured fixture prefix')).toBeVisible()
+})
+
+test('legacy error logs remain readable and explain when detailed capture is absent', async () => {
+  renderErrorDialog(true, null)
+  expect(
+    await screen.findByText('No detailed capture is stored for this entry.')
+  ).toBeVisible()
+  expect(screen.getByText('legacy fixture summary')).toBeVisible()
+})

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	native "github.com/QuantumNous/new-api/pkg/workbuddy"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
@@ -48,10 +49,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, body io
 	if err != nil || len(data) > 8<<20 {
 		return nil, errors.New("WorkBuddy request exceeds size limit")
 	}
+	common.GetRelayDiagnostics(c).SetAttemptModel(info.GetUpstreamModelName(), string(info.GetFinalRequestRelayFormat()))
 	resp, err := pool.Chat(c.Request.Context(), info.UpstreamModelName, data)
 	if err != nil {
 		return nil, err
 	}
+	c.Set(common.UpstreamRequestIdKey, common.UpstreamRequestID(resp.Header))
 	if resp.StatusCode == 200 && !info.IsStream {
 		return native.AggregateResponse(resp)
 	}
