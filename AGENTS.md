@@ -80,6 +80,14 @@ DO NOT send optional commentary
 - 复用已有 UI、图表、筛选及表格组件，保留首次配置引导。此需求不授权自动发布镜像或替换 VPS 线上部署。
 - 用户要求完成浏览器视觉验收，并展示实际代码渲染的当前页面截图，以便决定后续样式调整；同时检查深浅主题、窄屏、筛选、加载、空数据及错误状态。可使用与生产隔离的本地示例数据库，交付时明确截图数据来源，不把本地验收视为线上部署授权。
 
+### 个人模型分析改进（2026-10-09）
+
+- 用户要求查看每个模型实际使用的 API 额度及占比，与 Token 用量并列展示；读取消费日志中实际扣除的额度，不按当前价格重算历史费用，也不声称是供应商账单。
+- 取消个人分析的 30/31 天日历限制，提供 90 天、近一年、全部已保留历史及自定义时间；长范围自动使用日/月趋势，查询仍保留超时、记录数量和安全整数边界，超限明确报错而不静默截断。
+- 用户认为“分流”桑基图不适合个人使用，将该页面替换为模型对比：可按额度、Token、请求量和已记录缓存占比排名，搜索模型，并查看输入、输出、缓存、额度占比及每请求平均额度。保留 `/dashboard/flow` 地址兼容已有链接。
+- 本次在 `feat/model-usage-comparison` 从 `develop` 开发，未直接在 `main` 编写功能；功能修改本身不授权自动替换 VPS 线上容器。vm2api 管理接入保持暂停。
+- 本轮实际验证使用 SQLite 3.50.4、MySQL 8.0.46、PostgreSQL 16.15 与独立日志库 ClickHouse 25.8.33.6，覆盖跨年度额度汇总、日/月时区边界、账号隔离与超限报错。前端看板 77 项测试及深浅主题、手机端和 430 天历史的浏览器验收已通过；截图使用隔离示例库，不代表线上数据。证据位于运维工作区 `work/model-usage-comparison-validation/`，后续修改仍须重新验证。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.

@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export type UsageScope = 'self' | 'all'
-export type UsageGranularity = 'hour' | 'day'
+export type UsageGranularity = 'hour' | 'day' | 'month'
 
 export interface UsageMetrics {
+  quota: number
   request_count: number
   input_tokens: number
   output_tokens: number

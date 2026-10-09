@@ -36,7 +36,7 @@ const DASHBOARD_SECTIONS = [
   },
   {
     id: 'flow',
-    titleKey: 'Flow',
+    titleKey: 'Model comparison',
     build: () => null,
   },
   {

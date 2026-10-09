@@ -87,6 +87,7 @@ describe('recorded cache chart', () => {
       }
     )
     const emptyBucket: UsageSeriesPoint = {
+      quota: 0,
       created_at: 1791417600,
       request_count: 0,
       input_tokens: 0,

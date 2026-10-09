@@ -17,50 +17,31 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { Eye, EyeOff } from 'lucide-react'
 import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { FadeIn } from '@/components/page-transition'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
 import { UsageDashboard } from './components/usage/usage-dashboard'
-import {
-  buildDefaultDashboardFilters,
-  getDefaultDays,
-  getSavedChartPreferences,
-  getSavedGranularity,
-} from './lib'
+import { getDefaultDays, getSavedGranularity } from './lib'
 import {
   type DashboardSectionId,
   DASHBOARD_DEFAULT_SECTION,
   DASHBOARD_SECTION_IDS,
 } from './section-registry'
-import type { DashboardFilters, UserChartsFilters } from './types'
+import type { UserChartsFilters } from './types'
 
 const route = getRouteApi('/_authenticated/dashboard/$section')
 
 const LazyUserCharts = lazy(() =>
   import('./components/users/user-charts').then((m) => ({
     default: m.UserCharts,
-  }))
-)
-
-const LazyFlowCharts = lazy(() =>
-  import('./components/flow/flow-charts').then((m) => ({
-    default: m.FlowCharts,
   }))
 )
 
@@ -86,7 +67,7 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
     titleKey: 'Model usage analytics',
   },
   flow: {
-    titleKey: 'Flow',
+    titleKey: 'Model comparison',
   },
   users: {
     titleKey: 'User Analytics',
@@ -101,10 +82,6 @@ export function Dashboard() {
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
 
-  const [chartPreferences] = useState(() => getSavedChartPreferences())
-  const [modelFilters, setModelFilters] = useState<DashboardFilters>(() =>
-    buildDefaultDashboardFilters(getSavedChartPreferences())
-  )
   const [userChartsFilters, setUserChartsFilters] = useState<UserChartsFilters>(
     () => {
       const granularity = getSavedGranularity()
@@ -115,16 +92,6 @@ export function Dashboard() {
       }
     }
   )
-  const [flowSensitiveVisible, setFlowSensitiveVisible] = useState(true)
-
-  const handleFilterChange = useCallback((filters: DashboardFilters) => {
-    setModelFilters(filters)
-  }, [])
-
-  const handleResetFilters = useCallback(() => {
-    setModelFilters(buildDefaultDashboardFilters(chartPreferences))
-  }, [chartPreferences])
-
   const meta = SECTION_META[activeSection] ?? SECTION_META.overview
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const visibleSections = useMemo(
@@ -145,45 +112,6 @@ export function Dashboard() {
   )
   const showSectionTabs =
     activeSection !== 'overview' && visibleSections.length > 1
-  const flowActions =
-    activeSection === 'flow' ? (
-      <>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant='ghost'
-                size='icon'
-                onClick={() => setFlowSensitiveVisible((prev) => !prev)}
-                aria-label={
-                  flowSensitiveVisible
-                    ? t('Hide sensitive data')
-                    : t('Show sensitive data')
-                }
-                className='text-muted-foreground hover:text-foreground size-8'
-              />
-            }
-          >
-            {flowSensitiveVisible ? <Eye /> : <EyeOff />}
-          </TooltipTrigger>
-          <TooltipContent>
-            {flowSensitiveVisible
-              ? t('Hide sensitive data')
-              : t('Show sensitive data')}
-          </TooltipContent>
-        </Tooltip>
-        <ModelsFilter
-          preferences={chartPreferences}
-          currentFilters={modelFilters}
-          onFilterChange={handleFilterChange}
-          onReset={handleResetFilters}
-          titleKey='Flow Filters'
-          descriptionKey='Filter the traffic flow view by time range and user.'
-        />
-      </>
-    ) : null
-  const sectionActions = flowActions
-
   if (activeSection === 'overview') {
     return <OverviewDashboard />
   }
@@ -211,11 +139,6 @@ export function Dashboard() {
             ) : (
               <div />
             )}
-            {sectionActions != null && (
-              <div className='flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
-                {sectionActions}
-              </div>
-            )}
           </div>
           {activeSection === 'models' && <UsageDashboard />}
           {activeSection === 'users' && (
@@ -228,16 +151,7 @@ export function Dashboard() {
               </Suspense>
             </FadeIn>
           )}
-          {activeSection === 'flow' && (
-            <FadeIn>
-              <Suspense fallback={<ModelChartsFallback />}>
-                <LazyFlowCharts
-                  filters={modelFilters}
-                  sensitiveVisible={flowSensitiveVisible}
-                />
-              </Suspense>
-            </FadeIn>
-          )}
+          {activeSection === 'flow' && <UsageDashboard comparison />}
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>

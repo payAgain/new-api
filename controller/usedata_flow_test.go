@@ -159,7 +159,7 @@ func TestUsageAnalysisControllerIsolationAndValidation(t *testing.T) {
 		{name: "missing range", path: "/api/data/usage/self", self: true, id: 1, status: 200},
 		{name: "malformed timestamp", path: "/api/data/usage/self?start_timestamp=bad&end_timestamp=2000", self: true, id: 1, status: 200},
 		{name: "reversed range", path: "/api/data/usage/self?start_timestamp=2000&end_timestamp=1000", self: true, id: 1, status: 200},
-		{name: "range exceeds month", path: "/api/data/usage/self?start_timestamp=1&end_timestamp=2678402", self: true, id: 1, status: 200},
+		{name: "range exceeding a month retains self isolation", path: "/api/data/usage/self?start_timestamp=1&end_timestamp=2678402&username=bob", self: true, id: 1, status: 200, count: 1, success: true},
 		{name: "invalid granularity", path: "/api/data/usage/self?start_timestamp=1000&end_timestamp=2000&granularity=week", self: true, id: 1, status: 200},
 		{name: "invalid timezone", path: "/api/data/usage/self?start_timestamp=1000&end_timestamp=2000&timezone_offset=841", self: true, id: 1, status: 200},
 		{name: "malformed timezone", path: "/api/data/usage/self?start_timestamp=1000&end_timestamp=2000&timezone_offset=oops", self: true, id: 1, status: 200},

@@ -54,7 +54,11 @@ export function UsageCharts(props: UsageChartsProps) {
     locale,
     props.granularity === 'hour'
       ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
-      : { month: '2-digit', day: '2-digit' }
+      : {
+          year: 'numeric',
+          month: '2-digit',
+          ...(props.granularity === 'day' ? { day: '2-digit' as const } : {}),
+        }
   )
   const config = {
     input_tokens: { label: t('Input tokens'), color: 'var(--chart-1)' },
@@ -173,6 +177,7 @@ export function UsageTooltipContent(
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const dateFormatter = new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

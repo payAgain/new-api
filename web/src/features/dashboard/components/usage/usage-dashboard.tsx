@@ -58,6 +58,7 @@ import type {
   UsageFilters as UsageFilterValues,
   UsageScope,
 } from '../../usage-types'
+import { UsageComparison } from './usage-comparison'
 import { UsageFilters } from './usage-filters'
 import { UsageModels } from './usage-models'
 import { UsageSummary } from './usage-summary'
@@ -68,6 +69,7 @@ const LazyUsageCharts = lazy(() =>
 
 interface UsageDashboardProps {
   compact?: boolean
+  comparison?: boolean
 }
 
 export function UsageDashboard(props: UsageDashboardProps) {
@@ -99,7 +101,7 @@ export function UsageDashboard(props: UsageDashboardProps) {
 
   const handleRangeChange = (value: string) => {
     const days = Number(value)
-    if (![1, 7, 30].includes(days)) return
+    if (![0, 1, 7, 30, 90, 365].includes(days)) return
     setRangeDays(days)
     setFilters((current) => ({
       ...buildUsageFilters(days),
@@ -118,7 +120,9 @@ export function UsageDashboard(props: UsageDashboardProps) {
       <div className='flex flex-wrap items-start justify-between gap-3'>
         <div className='flex flex-col gap-1'>
           <h2 className='text-lg font-semibold'>
-            {compact ? t('Model usage at a glance') : t('Usage breakdown')}
+            {compact
+              ? t('Model usage at a glance')
+              : t(props.comparison ? 'Compare your models' : 'Usage breakdown')}
           </h2>
           <p className='text-muted-foreground text-xs'>
             {compact
@@ -211,6 +215,9 @@ export function UsageDashboard(props: UsageDashboardProps) {
               <TabsTrigger value='1'>{t('Last 24 hours')}</TabsTrigger>
               <TabsTrigger value='7'>{t('Last 7 days')}</TabsTrigger>
               <TabsTrigger value='30'>{t('Last 30 days')}</TabsTrigger>
+              <TabsTrigger value='90'>{t('Last 90 days')}</TabsTrigger>
+              <TabsTrigger value='365'>{t('Last year')}</TabsTrigger>
+              <TabsTrigger value='0'>{t('All history')}</TabsTrigger>
             </TabsList>
           </Tabs>
           <UsageFilters
@@ -230,12 +237,19 @@ export function UsageDashboard(props: UsageDashboardProps) {
       {!compact && (
         <div className='text-muted-foreground flex flex-wrap items-center gap-2 text-xs'>
           <span>
-            {formatTimestampToDate(params.start_timestamp)} –{' '}
-            {formatTimestampToDate(params.end_timestamp)}
+            {formatTimestampToDate(
+              usageQuery.data?.meta.start_timestamp ?? params.start_timestamp
+            )}{' '}
+            – {formatTimestampToDate(params.end_timestamp)}
           </span>
           <Badge variant='outline'>
             {effectiveScope === 'self' ? t('My usage') : t('All accounts')}
           </Badge>
+          <span>
+            {t(
+              'Statistics include retained logs only. Long ranges use daily or monthly buckets.'
+            )}
+          </span>
           {params.model_name && (
             <Badge
               variant='outline'
@@ -336,6 +350,12 @@ export function UsageDashboard(props: UsageDashboardProps) {
                 </AlertDescription>
               </Alert>
             )}
+          {props.comparison &&
+            !usageQuery.isPending &&
+            data &&
+            data.summary.request_count > 0 && (
+              <UsageComparison models={data.models} summary={data.summary} />
+            )}
           {usageQuery.isPending && (
             <div
               className='grid gap-4 lg:grid-cols-2'
@@ -354,42 +374,52 @@ export function UsageDashboard(props: UsageDashboardProps) {
               bordered
             />
           )}
-          {!usageQuery.isPending && data && data.summary.request_count > 0 && (
-            <>
-              <div className='grid min-w-0 items-start gap-4 lg:grid-cols-2'>
-                <Suspense
-                  fallback={<Skeleton className='h-80 w-full rounded-xl' />}
-                >
-                  <LazyUsageCharts
-                    series={data.series}
-                    granularity={filters.granularity}
-                  />
-                </Suspense>
-                <UsageModels
-                  models={data.models}
-                  totalTokens={data.summary.total_tokens}
-                  compact
-                />
-              </div>
-              {!compact && (
-                <>
+          {!usageQuery.isPending &&
+            data &&
+            data.summary.request_count > 0 &&
+            !props.comparison && (
+              <>
+                <div className='grid min-w-0 items-start gap-4 lg:grid-cols-2'>
                   <Suspense
                     fallback={<Skeleton className='h-80 w-full rounded-xl' />}
                   >
                     <LazyUsageCharts
                       series={data.series}
-                      granularity={filters.granularity}
-                      cacheOnly
+                      granularity={
+                        usageQuery.data?.meta.granularity ?? filters.granularity
+                      }
                     />
                   </Suspense>
                   <UsageModels
                     models={data.models}
                     totalTokens={data.summary.total_tokens}
+                    totalQuota={data.summary.quota}
+                    compact
                   />
-                </>
-              )}
-            </>
-          )}
+                </div>
+                {!compact && (
+                  <>
+                    <Suspense
+                      fallback={<Skeleton className='h-80 w-full rounded-xl' />}
+                    >
+                      <LazyUsageCharts
+                        series={data.series}
+                        granularity={
+                          usageQuery.data?.meta.granularity ??
+                          filters.granularity
+                        }
+                        cacheOnly
+                      />
+                    </Suspense>
+                    <UsageModels
+                      models={data.models}
+                      totalTokens={data.summary.total_tokens}
+                      totalQuota={data.summary.quota}
+                    />
+                  </>
+                )}
+              </>
+            )}
         </>
       )}
     </section>

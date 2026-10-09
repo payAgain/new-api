@@ -19,15 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   fireEvent,
+  act,
   render,
   screen,
   waitFor,
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { Database } from 'lucide-react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -37,6 +40,7 @@ import { UsageDashboard } from '../usage-dashboard'
 import { UsageSummary } from '../usage-summary'
 
 const metrics: UsageMetrics = {
+  quota: 500000,
   request_count: 1,
   input_tokens: 1200,
   output_tokens: 300,
@@ -79,7 +83,8 @@ beforeEach(() => {
   }))
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await i18next.changeLanguage('en')
   client.clear()
   vi.useRealTimers()
   useAuthStore.setState(useAuthStore.getInitialState(), true)
@@ -94,6 +99,146 @@ function renderUsage() {
 }
 
 describe('personal usage dashboard', () => {
+  it('updates quota and history labels using the actual Chinese translation resource', async () => {
+    renderUsage()
+    await screen.findByRole('table', { name: 'Usage by model' })
+    await act(async () => {
+      i18next.addResourceBundle(
+        'zhCN',
+        'translation',
+        zh.translation,
+        true,
+        true
+      )
+      await i18next.changeLanguage('zhCN')
+    })
+    const table = screen.getByRole('table', { name: '各模型用量' })
+    expect(
+      within(table).getByRole('columnheader', { name: 'API 额度消耗' })
+    ).toBeVisible()
+    expect(screen.getByRole('tab', { name: '全部历史' })).toBeVisible()
+  })
+  it('offers a year and all retained history without a 30-day ceiling', async () => {
+    const user = userEvent.setup()
+    renderUsage()
+    await user.click(screen.getByRole('tab', { name: 'Last year' }))
+    await waitFor(() =>
+      expect(api.get).toHaveBeenLastCalledWith(
+        '/api/data/usage/self',
+        expect.objectContaining({
+          params: expect.objectContaining({ granularity: 'day' }),
+        })
+      )
+    )
+    await user.click(screen.getByRole('tab', { name: 'All history' }))
+    await waitFor(() =>
+      expect(api.get).toHaveBeenLastCalledWith(
+        '/api/data/usage/self',
+        expect.objectContaining({
+          params: expect.objectContaining({ start_timestamp: 1 }),
+        })
+      )
+    )
+  })
+  it('shows actual quota charged alongside model token usage', async () => {
+    renderUsage()
+    const table = await screen.findByRole('table', { name: 'Usage by model' })
+    expect(
+      within(table).getByRole('columnheader', { name: 'API quota used' })
+    ).toBeVisible()
+    expect(within(table).getAllByText('$1')[0]).toBeVisible()
+  })
+
+  it('ranks models by actual quota and changes ranking to total tokens without changing the dataset', async () => {
+    response.models = [
+      {
+        ...metrics,
+        model_name: 'token-heavy',
+        quota: 50000,
+        total_tokens: 9000,
+      },
+      {
+        ...metrics,
+        model_name: 'quota-heavy',
+        quota: 450000,
+        total_tokens: 1000,
+      },
+    ]
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard comparison />
+      </QueryClientProvider>
+    )
+    const rankings = await screen.findByRole('tablist', {
+      name: 'Rank models by',
+    })
+    const table = screen.getByRole('table', { name: 'Usage by model' })
+    expect(within(table).getAllByRole('row')[1]).toHaveTextContent(
+      'quota-heavy'
+    )
+    expect(within(table).getAllByRole('row')[1]).toHaveTextContent('90%')
+    await user.click(
+      within(rankings).getByRole('tab', { name: 'Total tokens' })
+    )
+    expect(within(table).getAllByRole('row')[1]).toHaveTextContent(
+      'token-heavy'
+    )
+    await user.type(
+      screen.getByRole('textbox', { name: 'Search models' }),
+      'quota'
+    )
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(within(table).getAllByRole('row')[1]).toHaveTextContent(
+      'quota-heavy'
+    )
+  })
+  it('keeps missing cache values unknown and presents a useful empty search result', async () => {
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard comparison />
+      </QueryClientProvider>
+    )
+    await screen.findByRole('tablist', { name: 'Rank models by' })
+    const cacheLeader = screen.getByRole('region', {
+      name: 'Highest recorded cache share',
+    })
+    expect(within(cacheLeader).getAllByText('Not reported')).toHaveLength(2)
+    await user.type(
+      screen.getByRole('textbox', { name: 'Search models' }),
+      'does-not-exist'
+    )
+    expect(screen.getByText('No matching models')).toBeVisible()
+    expect(screen.getByRole('table', { name: 'Usage by model' })).toBeVisible()
+  })
+  it('accepts a custom time range longer than a year and keeps invalid end-before-start checks', async () => {
+    const user = userEvent.setup()
+    renderUsage()
+    await screen.findByRole('table', { name: 'Usage by model' })
+    await user.click(screen.getByRole('button', { name: 'Usage filters' }))
+    fireEvent.change(screen.getByLabelText('Start time'), {
+      target: { value: '2024-01-01T00:00' },
+    })
+    fireEvent.change(screen.getByLabelText('End time'), {
+      target: { value: '2026-10-09T00:00' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(api.get).toHaveBeenLastCalledWith('/api/data/usage/self', {
+      params: expect.objectContaining({
+        start_timestamp: Math.floor(
+          new Date('2024-01-01T00:00').getTime() / 1000
+        ),
+        end_timestamp: Math.floor(
+          new Date('2026-10-09T00:00').getTime() / 1000
+        ),
+      }),
+    })
+  })
+
   it('names the time-range tablist for assistive technology', () => {
     renderUsage()
     expect(
@@ -307,9 +452,7 @@ describe('personal usage dashboard', () => {
     fireEvent.change(endInput, { target: { value: '2020-01-01T00:00' } })
     await user.click(screen.getByRole('button', { name: 'Apply filters' }))
     expect(
-      await screen.findByText(
-        'Choose a time range of up to 31 days with the end after the start.'
-      )
+      await screen.findByText('Choose an end time after the start time.')
     ).toBeVisible()
     expect(screen.getByRole('dialog')).toBeVisible()
   })
