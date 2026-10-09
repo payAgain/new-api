@@ -110,6 +110,12 @@ DO NOT send optional commentary
 - 本轮已验证 SQLite 3.50.4、MySQL 8.0.46、PostgreSQL 16.15 的真实错误入库、原始响应与渠道状态映射、去重及 root / 管理员 / 用户可见性；临时数据库容器已清理，未修改生产实例。后端 controller、router、service、middleware、channel、WorkBuddy 相关回归及诊断并发检查通过，另验证 Responses WebSocket 原始事件与退款、WorkBuddy 失效凭据刷新和逐次请求采集。
 - 使用日志前端 411 项测试、改动文件 lint / 格式检查、类型检查及生产构建通过；Mac 和 Linux amd64 构建通过。浏览器验收覆盖真实本地上游失败、重试切换、原始鉴权头、诊断 JSON 复制、截断与旧日志提示、深浅主题和手机端，无运行时错误；截图使用隔离实例及明确标记的示例重试数据。证据保存在运维工作区 `work/error-diagnostics-validation/`。原始诊断沿用 root 身份与会话鉴权；访问隔离验证参考 OWASP Authentication、Session Management、Logging Cheat Sheets，未改动登录或独立认证审计的采集规则。
 
+### 新功能合并与部署授权（2026-10-10）
+
+- 用户进一步确认，只需错误及异常调用保存详细诊断，正常调用继续保留模型、Token、缓存、额度和耗时等统计，不保存完整请求与响应。流式中途异常的诊断可以附在已计费消费日志中；失败重试可能产生多条错误记录。单条采集容量限制不代表历史保留期限或总日志容量限制，本次未要求新增自动清理策略。
+- 用户明确要求把新开发的功能合入自己的主线并更新当前 VPS New API，授权本次按 `feat/error-diagnostics → develop → main` 本地合并和部署新的定制镜像。此次上线包含主线上尚未部署的历史额度 / 单模型详细分析，以及失败请求详细诊断；版本沿用 `v1.0.0-rc.42`，以发布 SHA 和实际 image ID 区分构建，不自动升级上游基线。
+- 此授权取代上一轮“不自动合并或部署”的本轮限制，不授权推送远程、创建 PR、开启 vm2api 管理接入、迁移现有 WorkBuddy 渠道或拆除桥接。部署前完成新备份及隔离恢复，确认原数据库与依赖配置兼容，按已验证的优雅退出流程切换并保留上一版回滚镜像。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
