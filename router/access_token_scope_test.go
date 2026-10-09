@@ -166,6 +166,19 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 }
 
+func TestUsageAnalysisRoutesUseDashboardReadScopes(t *testing.T) {
+	newAccessTokenScopeTestEngine(t)
+	for key, scope := range map[string]string{
+		"GET /api/data/usage":      "log:read",
+		"GET /api/data/usage/self": "usage:read",
+	} {
+		rule, ok := middleware.AccessTokenRouteRule(key)
+		require.True(t, ok, key)
+		require.Equal(t, "scope", rule.Kind(), key)
+		require.Equal(t, scope, rule.Scope(), key)
+	}
+}
+
 func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
 	files, err := filepath.Glob("../service/*.go")
 	require.NoError(t, err)
