@@ -73,3 +73,26 @@ export interface UsageFilters {
   model: string
   username: string
 }
+
+export interface UsageModelOption {
+  model_name: string
+  last_used: number
+}
+
+export interface UsageRequest extends UsageMetrics {
+  id: number
+  created_at: number
+  model_name: string
+  token_name: string
+  request_id: string
+  use_time: number
+  is_stream: boolean
+  first_response_ms: number | null
+}
+
+export interface UsageRequestPage {
+  items: UsageRequest[]
+  total: number
+  page: number
+  page_size: number
+}

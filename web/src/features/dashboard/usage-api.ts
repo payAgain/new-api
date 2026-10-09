@@ -19,7 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import type { UsageDataset, UsageQueryParams, UsageScope } from './usage-types'
+import type {
+  UsageDataset,
+  UsageModelOption,
+  UsageRequestPage,
+  UsageQueryParams,
+  UsageScope,
+} from './usage-types'
 
 export async function getModelUsage(
   params: UsageQueryParams,
@@ -31,5 +37,42 @@ export async function getModelUsage(
     message?: string
     data: UsageDataset
   }>(endpoint, { params })
+  return requireServerSuccess(response.data).data
+}
+
+export async function getUsageModels(
+  params: UsageQueryParams,
+  scope: UsageScope
+): Promise<UsageModelOption[]> {
+  const endpoint = scope === 'all' ? '/api/data/usage' : '/api/data/usage/self'
+  const response = await api.get<{
+    success: boolean
+    message?: string
+    data: UsageModelOption[]
+  }>(endpoint, {
+    params: {
+      ...params,
+      model_name: undefined,
+      start_timestamp: 1,
+      view: 'models',
+    },
+  })
+  return requireServerSuccess(response.data).data
+}
+
+export async function getUsageRequests(
+  params: UsageQueryParams,
+  scope: UsageScope,
+  page: number,
+  pageSize: number
+): Promise<UsageRequestPage> {
+  const endpoint = scope === 'all' ? '/api/data/usage' : '/api/data/usage/self'
+  const response = await api.get<{
+    success: boolean
+    message?: string
+    data: UsageRequestPage
+  }>(endpoint, {
+    params: { ...params, view: 'requests', page, page_size: pageSize },
+  })
   return requireServerSuccess(response.data).data
 }

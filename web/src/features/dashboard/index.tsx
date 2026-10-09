@@ -67,7 +67,7 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
     titleKey: 'Model usage analytics',
   },
   flow: {
-    titleKey: 'Model comparison',
+    titleKey: 'Model detail analysis',
   },
   users: {
     titleKey: 'User Analytics',
@@ -151,7 +151,7 @@ export function Dashboard() {
               </Suspense>
             </FadeIn>
           )}
-          {activeSection === 'flow' && <UsageDashboard comparison />}
+          {activeSection === 'flow' && <UsageDashboard singleModel />}
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>

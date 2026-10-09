@@ -49,6 +49,7 @@ import type { UsageFilters as UsageFilterValues } from '../../usage-types'
 interface UsageFiltersProps {
   filters: UsageFilterValues
   allAccounts: boolean
+  singleModel?: boolean
   onApply: (filters: UsageFilterValues) => void
   onReset: () => void
 }
@@ -215,23 +216,25 @@ export function UsageFilters(props: UsageFiltersProps) {
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name='model'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Model name')}</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    maxLength={256}
-                    placeholder={t('All models')}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {!props.singleModel && (
+            <FormField
+              control={form.control}
+              name='model'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Model name')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      maxLength={256}
+                      placeholder={t('All models')}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           {props.allAccounts && (
             <FormField
               control={form.control}
