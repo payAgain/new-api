@@ -65,6 +65,15 @@ DO NOT send optional commentary
 - 保留 rc.41 回滚镜像及升级前完整备份；不能恢复旧数据库覆盖之后的业务。实际部署证据位于运维工作区 `work/new-api-release-1deb850/deployment.json` 和 VPS `/opt/tokyo-maintenance/new-api-20261009-1deb850-deploy/report.json`，含一次校验来源误用导致的自动回退及纠正后成功重试记录。
 - `feat/vm2api-admin` 保留在 `fa7ba4d43`，只含暂停需求的文档记录。此次后续文档提交不改变已经部署的功能代码，也不表示服务器镜像来自这些文档提交。
 
+### 原生 WorkBuddy 渠道迁移（2026-10-10）
+
+- 用户明确要求把现有外部桥接迁到本 fork 已开发的原生 WorkBuddy 渠道。本次授权包括现有账号的私密迁移、真实上游验证、启用原生渠道及停用旧本机服务 / SSH 反向隧道；此前“尚未迁移 / 不自动拆桥”的部署记录为当时状态，已由本次要求和实际迁移取代。
+- 2026-10-10 11:12（Asia/Tokyo）迁移完成。保留渠道 ID 13、六个已选模型、default 分组及历史日志，类型由 1 改为 64，名称 `WorkBuddy-Native`，原桥接地址清空；原状态为手动停用，本次迁移后启用。导入 1 个国内账号，分配方式 priority，自动签到开启。New API 容器、镜像与版本未重启或替换。
+- 使用新的完整数据库 / 配置备份，在隔离 PostgreSQL 克隆和线上分别验证 VPS 直连目录、积分、今日签到与 deepseek-v4.1-flash 的 Chat / Responses 流式及非流式调用。停止旧隧道后又验证一次原生调用成功；不把一个模型的成功宣称为六个模型全部逐项验收。
+- 自动签到由 VPS New API 主节点执行，北京时间 08:00 / 日本时间 09:00 检查，失败 15 分钟重试，先查询上游以避免重复领取；今日签到已确认，不重复发放。新面板在 `/channels` → `WorkBuddy-Native` →「WorkBuddy 账号」，支持签到、积分、令牌刷新与账号管理；不再使用 Mac 的 19091 独立面板。以后新增账号需在原生渠道导入，不再自动扫描 Mac 的 WorkBuddy 登录文件。
+- Mac 的 `com.yimingd.workbuddy-local` 和 `com.yimingd.workbuddy-tunnel` 作业已 bootout，两个 plist 移到用户私有迁移归档，避免重新登录后启动；本机 19091 / 41851 及 VPS 反向监听 41851 已关闭。原安装源码、账号状态和专用 SSH 用户 / 密钥保留为停用的回滚材料，不能当作当前运行依赖；未修改原 pi-desktop 插件。
+- 备份及迁移账号材料只保存在 700 / 600 私有目录，不写入本仓库。迁移中临时限时管理 / 推理凭据已撤销，隔离容器和工作凭据文件已清理；操作走正常渠道管理接口，以更新缓存、abilities 及审计。完整证据在运维工作区 `work/workbuddy-native-migration-20261010/report.json`，服务器 `/opt/tokyo-maintenance/workbuddy-native-20261010-110746/report.json`。
+
 ### WorkBuddy 的需求、历史方案和当前实现
 
 - 原始功能来源是用户的 pi-desktop 插件 `/Users/yimingd/.pi-desktop/plugins/installed/local.pi-desktop-workbuddy/`。独立桥接服务的工作目录为 `/Users/yimingd/Remote/Tokyo/work/workbuddy-bridge`，用于必要的协议和兼容性溯源，不是原生渠道的运行依赖。
