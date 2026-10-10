@@ -83,6 +83,12 @@ DO NOT send optional commentary
 - 线上只读核对截至本次检查，新版部署后 27/27 条错误日志有原始诊断，860 条消费日志中 5 条中途异常附带诊断。具体内容由 root 在 `/usage-logs/common` → 日志详情 →「错误诊断」→「原始请求」/「正文」查看；上游调用页包含实际转发请求和响应，可复制报告。普通成功请求仍不保存正文，不因本次查看问题开启成功请求详细采集。
 - 已看到约 2 MiB 的 Claude 输入被默认 1 MiB 单正文限制截断；部分其他错误正文完整。采集上限和历史无法补回的边界应如实告知用户，当前请求没有授权自动提高容量或改变日志保留策略；生产日志配置保持。
 
+### vm2api 日志只读评估（2026-10-10）
+
+- 用户询问 vm2api 是否记录得非常详细。只读核对实际 v1.3.125 的运行代码和生产日志，当前全局 debug，统计保留 7 天、详细保留 3 天、debug 内容清理目标 2048 MiB，每 10 分钟清理；本次不执行升级、日志配置调整或额外推理。
+- vm2api 成功 / 失败均采集请求头、入站 / 转发正文、精简快照、客户端响应及路由 / 耗时 / Token 等。正文默认 200,000 字符上限，凭据形态遮蔽、图片省略，不能称为完整原始归档；抽查成功记录约 632K 字符且输入 / 转发 / SSE 响应均截断。生产 SQLite 约 2.26GB，详细表页分配约 2.20GB；物理文件大小不等于当前 debug 内容限额。
+- 最新 24 小时 5 条 upstream_transport 502 有 debug 但入站和转发正文为空，只有客户端错误响应；记录详细不代表错误诊断无缺口。off / normal / debug 没有单独“仅错误详细”的全局模式，直接切 normal 也会关闭错误正文。本 fork New API 的仅失败详细采集约定仍沿用，不自动把此次评估扩展为 vm2api 改造。证据位于运维工作区 `work/vm2api-log-review/report.json` 与既有 `docs/14-vm2api.md`，无私密正文。
+
 ### WorkBuddy 的需求、历史方案和当前实现
 
 - 原始功能来源是用户的 pi-desktop 插件 `/Users/yimingd/.pi-desktop/plugins/installed/local.pi-desktop-workbuddy/`。独立桥接服务的工作目录为 `/Users/yimingd/Remote/Tokyo/work/workbuddy-bridge`，用于必要的协议和兼容性溯源，不是原生渠道的运行依赖。
