@@ -54,7 +54,7 @@ DO NOT send optional commentary
 - 新备份真实恢复到隔离 PostgreSQL 15.19，新版 master 两次启动、新旧应用读取兼容、既有结构 / 索引 / 约束 / 业务表摘要均通过；历史精确模型额度与 SQL、分页权限隔离、无效请求 raw 诊断与 root 可见性及普通成功日志无 raw 正文均通过。对应源码的 SQLite / MySQL / PostgreSQL、前端与视觉验收已有记录。
 - 线上 Docker healthy / restart 0，客户端公网和八个构建资源的字节通过；只替换 New API，PG / Redis / vm2api / .env / Caddy 及路由结构保持。验证令牌可见 6 个模型，切换前后相同，不将此令牌范围与历史 11 模型验收数量直接比较。没有发送额外推理或创建生产管理员凭据。隔离容器和临时凭据已清理。
 - 完整备份已下载到项目之外的 700 / 600 受限目录并核对 SHA256；保留 `new-api-rollback:20261010-1deb850-rc42` 作为上一版定制 rc.42 回滚镜像，不能恢复旧数据库覆盖后续业务。部署证据在运维目录 `work/new-api-release-c4465b0/deployment.json` 和 VPS `/opt/tokyo-maintenance/new-api-20261010-c4465b04a-deploy/report.json`。
-- 既有 WorkBuddy 渠道 13 仍使用旧桥接，未自动迁移账号或拆除隧道。`feat/vm2api-admin` 保持暂停并保留。
+- 在 02:33 镜像部署完成时，WorkBuddy 渠道 13 尚未迁移；此后已按下文迁移与清理记录改为原生渠道并拆除旧桥接。`feat/vm2api-admin` 保持暂停并保留。
 
 ### 上一轮部署记录（2026-10-09）
 
@@ -73,6 +73,15 @@ DO NOT send optional commentary
 - 自动签到由 VPS New API 主节点执行，北京时间 08:00 / 日本时间 09:00 检查，失败 15 分钟重试，先查询上游以避免重复领取；今日签到已确认，不重复发放。新面板在 `/channels` → `WorkBuddy-Native` →「WorkBuddy 账号」，支持签到、积分、令牌刷新与账号管理；不再使用 Mac 的 19091 独立面板。以后新增账号需在原生渠道导入，不再自动扫描 Mac 的 WorkBuddy 登录文件。
 - Mac 的 `com.yimingd.workbuddy-local` 和 `com.yimingd.workbuddy-tunnel` 作业已 bootout，两个 plist 移到用户私有迁移归档，避免重新登录后启动；本机 19091 / 41851 及 VPS 反向监听 41851 已关闭。原安装源码、账号状态和专用 SSH 用户 / 密钥保留为停用的回滚材料，不能当作当前运行依赖；未修改原 pi-desktop 插件。
 - 备份及迁移账号材料只保存在 700 / 600 私有目录，不写入本仓库。迁移中临时限时管理 / 推理凭据已撤销，隔离容器和工作凭据文件已清理；操作走正常渠道管理接口，以更新缓存、abilities 及审计。完整证据在运维工作区 `work/workbuddy-native-migration-20261010/report.json`，服务器 `/opt/tokyo-maintenance/workbuddy-native-20261010-110746/report.json`。
+
+### 旧 WorkBuddy 服务清理与日志核对（2026-10-10）
+
+- 用户在原生迁移完成后明确要求清理原来的服务与 SSH 隧道残留，并确认日志是否能查看请求具体内容。清理仅针对已退休的 WorkBuddy 桥接；vm2api 隧道和其他 SSH 服务、New API 原生账号与渠道均保留，不扩展为全站 SSH 清理。
+- 已归档并移除 Mac 的 `~/.local/share/workbuddy-bridge`、`~/.local/state/tokyo/workbuddy-bridge` 和专用 `~/.ssh/workbuddy_tunnel_ed25519` / `.pub`。两个旧 LaunchAgent 已在迁移时 bootout 并归档，登录后不再自启；原插件路径未执行任何删除操作，WorkBuddy.app 未删除。旧桥接源码与许可证只保留作协议溯源，不是运行依赖。
+- VPS 已在共用维护锁下删除专用 `workbuddy-tunnel` 系统用户、`/var/lib/workbuddy-tunnel` 及 `/etc/ssh/sshd_config.d/60-workbuddy-tunnel.conf`。清理前私有备份验证通过，sshd -t / root 有效配置前后一致，reload 后新 root SSH 登录通过。本机 19091 / 41851、VPS 41851 均无监听；vm2api 本机 18787 health=200。渠道 13 保持类型 64、启用、名称 WorkBuddy-Native、桥接地址为空；New API / vm2api 容器及镜像没有替换或重启，.env / Compose / Caddy 与 root authorized_keys 字节未改变。
+- 私有回滚归档位于 `~/.local/state/tokyo/workbuddy-native-migration/cleanup-20261010-135622`（700 / 600），包含本机安装 / 状态 / 专用密钥和 VPS 专用 SSH 配置 / 用户目录备份，下载后 SHA256 已核对；服务器归档 `/opt/tokyo-maintenance/workbuddy-cleanup-20261010-135622`。已退休用户和监听不再作为巡检正常基线，历史记录保留当时归因。恢复旧桥接必须重新建立账号 / 配置 / 密钥，不得把归档误当作活跃服务。运维证据 `work/workbuddy-cleanup-report.json`。
+- 线上只读核对截至本次检查，新版部署后 27/27 条错误日志有原始诊断，860 条消费日志中 5 条中途异常附带诊断。具体内容由 root 在 `/usage-logs/common` → 日志详情 →「错误诊断」→「原始请求」/「正文」查看；上游调用页包含实际转发请求和响应，可复制报告。普通成功请求仍不保存正文，不因本次查看问题开启成功请求详细采集。
+- 已看到约 2 MiB 的 Claude 输入被默认 1 MiB 单正文限制截断；部分其他错误正文完整。采集上限和历史无法补回的边界应如实告知用户，当前请求没有授权自动提高容量或改变日志保留策略；生产日志配置保持。
 
 ### WorkBuddy 的需求、历史方案和当前实现
 
