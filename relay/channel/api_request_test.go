@@ -2,15 +2,104 @@ package channel
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRelayTransportTimingsPersistWithoutBodies(t *testing.T) {
+	const payload = `{"input":"private request"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || string(body) != payload {
+			http.Error(w, "changed request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output":"private response"}`)
+	}))
+	t.Cleanup(server.Close)
+	service.InitHttpClient()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{StartTime: time.Now(), ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 11}}
+	for _, cancelled := range []bool{false, true} {
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, server.URL, strings.NewReader(payload))
+		require.NoError(t, err)
+		if cancelled {
+			ctx, cancel := context.WithCancel(req.Context())
+			cancel()
+			req = req.WithContext(ctx)
+		}
+		resp, err := DoRequest(c, req, info)
+		if cancelled {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			body, readErr := io.ReadAll(resp.Body)
+			require.NoError(t, readErr)
+			require.NoError(t, resp.Body.Close())
+			assert.JSONEq(t, `{"output":"private response"}`, string(body))
+		}
+	}
+	other := model.NewLogOther()
+	service.AppendRelayLogAdminInfo(c, info, other)
+	timings := other.Snapshot()["admin_info"].(map[string]any)["upstream_timings"].([]common.UpstreamTiming)
+	require.Len(t, timings, 2)
+	assert.Equal(t, 11, timings[0].ChannelID)
+	names := make([]string, 0, len(timings[0].Events))
+	for _, event := range timings[0].Events {
+		names = append(names, event.Name)
+	}
+	assert.Contains(t, names, "get_connection")
+	assert.Contains(t, names, "connection_ready")
+	assert.Contains(t, names, "request_written")
+	assert.Contains(t, names, "first_response_byte")
+	assert.Equal(t, "response_headers_received", names[len(names)-1])
+	failedEvents := timings[1].Events
+	require.NotEmpty(t, failedEvents)
+	assert.Equal(t, "roundtrip_error", failedEvents[len(failedEvents)-1].Name)
+	encoded, err := common.Marshal(timings)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "private request")
+	assert.NotContains(t, string(encoded), "private response")
+	assert.NotContains(t, string(encoded), server.URL)
+}
+
+func TestRelayTransportTimingPreservesTraceAndBoundsEvents(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	called := false
+	ctx := httptrace.WithClientTrace(c.Request.Context(), &httptrace.ClientTrace{GotFirstResponseByte: func() { called = true }})
+	req := c.Request.WithContext(ctx)
+	traced, done := common.TraceUpstreamRequest(c, req, 11, time.Now())
+	trace := httptrace.ContextClientTrace(traced.Context())
+	trace.GotFirstResponseByte()
+	assert.True(t, called)
+	snapshot := common.RelayUpstreamTimings(c)
+	done(nil)
+	assert.Len(t, snapshot[0].Events, 1, "snapshots do not change when transport callbacks arrive later")
+	// A transport may retry internally; cap its metadata without touching IO.
+	for range 40 {
+		trace.GetConn("unused.example")
+	}
+	snapshot = common.RelayUpstreamTimings(c)
+	assert.True(t, snapshot[0].Truncated)
+	assert.Less(t, len(snapshot[0].Events), 40)
+}
 
 func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
 	recorder := httptest.NewRecorder()
