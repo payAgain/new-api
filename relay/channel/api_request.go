@@ -577,7 +577,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		common2.GetRelayDiagnostics(c).SetAttemptModel(info.UpstreamModelName, string(info.GetFinalRequestRelayFormat()))
 	}
 	common2.GetRelayDiagnostics(c).CaptureRequest(req)
+	req, finishTiming := common2.TraceUpstreamRequest(c, req, info.ChannelId, info.StartTime)
 	resp, err := relayClient.Do(req)
+	finishTiming(err)
 	common2.GetRelayDiagnostics(c).CaptureResponse(resp, err)
 	if err != nil {
 		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))

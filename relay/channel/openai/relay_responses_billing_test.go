@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,89 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNonStreamResponsesAcceptsUpstreamEventStream(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	for _, terminal := range []string{"completed", "incomplete"} {
+		t.Run(terminal, func(t *testing.T) {
+			body := `{"id":"resp_test","object":"response","model":"gpt-test","status":"` + terminal + `","provider_extension":{"kept":true},"output":[{"type":"web_search_call","id":"search_1","status":"completed"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":100,"output_tokens":7,"total_tokens":107,"input_tokens_details":{"cached_tokens":80}}}`
+			sse := "event: codex.rate_limits\ndata: {\"type\":\"codex.rate_limits\"}\n\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+				`data: {"type":"response.` + terminal + `","response":` + body + "}\n\n"
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeResponses, OriginModelName: "gpt-test"}
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader(sse))}
+			usageValue, apiErr := (&Adaptor{}).DoResponse(c, resp, info)
+			require.Nil(t, apiErr)
+			usage, ok := usageValue.(*dto.Usage)
+			require.True(t, ok)
+			assert.Equal(t, 100, usage.PromptTokens)
+			assert.Equal(t, 7, usage.CompletionTokens)
+			assert.Equal(t, 80, usage.PromptTokensDetails.CachedTokens)
+			assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview].CallCount)
+			assert.JSONEq(t, body, w.Body.String())
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+			assert.False(t, info.IsStream)
+			assert.Equal(t, terminal, info.StreamStatus.ResponseOutcome())
+		})
+	}
+}
+
+func TestNonStreamResponsesRejectsFailedOrUnterminatedEventStream(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	for _, tc := range []struct{ name, body string }{
+		{"metadata only", "data: {\"type\":\"codex.rate_limits\"}\n\n"},
+		{"done without response", "data: [DONE]\n\n"},
+		{"truncated after output", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"},
+		{"malformed", "data: {broken}\n\n"},
+		{"missing response", "data: {\"type\":\"response.completed\"}\n\n"},
+		{"error", "data: {\"type\":\"error\",\"code\":\"upstream_failure\"}\n\n"},
+		{"failed", "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"message\":\"failed\"}}}\n\n"},
+		{"failed response in terminal envelope", "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"message\":\"failed\"}}}\n\n"},
+		{"cancelled", "data: {\"type\":\"response.cancelled\",\"response\":{\"status\":\"cancelled\"}}\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeResponses}
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(tc.body))}
+			_, apiErr := (&Adaptor{}).DoResponse(c, resp, info)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+			assert.False(t, c.Writer.Written(), "a buffered failure must leave HTTP status available to the error handler")
+			assert.Empty(t, w.Body.String())
+			assert.Empty(t, w.Header().Get("Content-Type"))
+		})
+	}
+}
+
+func TestNonStreamResponsesCancellationClosesUpstream(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	cancel()
+	info := &relaycommon.RelayInfo{}
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader}
+	_, apiErr := OaiResponsesHandler(c, info, resp)
+	require.NotNil(t, apiErr)
+	_, err := writer.Write([]byte("data: {}\n\n"))
+	assert.ErrorIs(t, err, io.ErrClosedPipe)
+	assert.False(t, c.Writer.Written())
+	assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
+}
 
 func TestOaiResponsesHandlerCountsOutputCallsNotDeclarations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
