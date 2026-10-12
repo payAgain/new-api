@@ -3,7 +3,9 @@ package openai
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -20,6 +22,10 @@ import (
 )
 
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if strings.EqualFold(contentType, "text/event-stream") {
+		return OaiResponsesBufferedStreamHandler(c, info, resp)
+	}
 	defer service.CloseResponseBodyGracefully(resp)
 
 	// read response body
@@ -65,6 +71,60 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	imageCounter.Commit(info)
 
 	return usage, nil
+}
+
+// OaiResponsesBufferedStreamHandler accepts a streaming upstream without
+// changing a non-streaming client's protocol. Only an explicit terminal
+// response can become JSON; EOF or [DONE] alone must not manufacture success.
+func OaiResponsesBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	defer service.CloseResponseBodyGracefully(resp)
+	var finalBody string
+	var streamErr *types.NewAPIError
+	helper.BufferedStreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		var event dto.ResponsesStreamResponse
+		if err := common.UnmarshalJsonStr(data, &event); err != nil {
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+			sr.Stop(streamErr)
+			return
+		}
+		service.ObserveResponsesOutcome(info, &event)
+		switch {
+		case info.StreamStatus.ResponseFailed() || info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCancelled):
+			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream ended with %s", event.Type), types.ErrorCodeBadResponse, http.StatusBadGateway)
+			if event.Response != nil {
+				if upstreamErr := event.Response.GetOpenAIError(); upstreamErr != nil && upstreamErr.Type != "" {
+					streamErr = types.WithOpenAIError(*upstreamErr, http.StatusBadGateway)
+				}
+			}
+			sr.Stop(streamErr)
+		case event.Type == "response.completed" || event.Type == "response.done" || event.Type == "response.incomplete":
+			if event.Response == nil {
+				streamErr = types.NewOpenAIError(fmt.Errorf("terminal responses event is missing response"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+				sr.Stop(streamErr)
+				return
+			}
+			// Retain fields unknown to the DTO, including provider extensions.
+			finalBody = gjson.Get(data, "response").Raw
+			sr.Done()
+		}
+	})
+	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
+	info.StreamStatus.RequireTerminal()
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	if finalBody == "" {
+		return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended without a terminal response: %s", info.StreamStatus.Summary()), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
+	// Reuse the JSON handler so usage and billable output calls are processed
+	// exactly once, under the same rules as a native non-streaming response.
+	jsonResponse := *resp
+	jsonResponse.Header = resp.Header.Clone()
+	jsonResponse.Header.Set("Content-Type", "application/json")
+	jsonResponse.Header.Del("Content-Length")
+	jsonResponse.Header.Del("Content-Encoding")
+	jsonResponse.Body = io.NopCloser(strings.NewReader(finalBody))
+	return OaiResponsesHandler(c, info, &jsonResponse)
 }
 
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
